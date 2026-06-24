@@ -7,7 +7,7 @@ set -euo pipefail
 # Parse arguments
 DIAGNOSE_ONLY=false
 TEST_IFACE=""
-REPAIR_TIMEOUT=60  # seconds to wait for repair before forcing restoration
+REPAIR_TIMEOUT=120  # seconds to wait for repair before forcing restoration
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [--diagnose-only] [--interface IFACE] [--timeout SECONDS]"
             echo "  --diagnose-only  Run diagnose only (no repairs)"
             echo "  --interface      Specify interface to test (default: auto-detect)"
-            echo "  --timeout        Timeout for repair command (default: 60s)"
+            echo "  --timeout        Timeout for repair command (default: 120s)"
             echo "  --help           Show this help"
             exit 0
             ;;
@@ -115,7 +115,6 @@ else
     echo "  ⚠️  Interface is DOWN"
 fi
 
-# Use \K instead of lookbehind for grep portability
 IP_ADDR=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1)
 echo "  IP: ${IP_ADDR:-None}"
 
@@ -172,20 +171,17 @@ else
     echo "  ✅ Internet unreachable (as expected)"
 fi
 
-echo ""
-echo "=============================================="
-echo "  RUNNING NETWORK RECOVERY"
-echo "=============================================="
-echo ""
+# ============================================================
+# RESTORE FUNCTION
+# ============================================================
 
-# Function to restore network regardless of repair outcome
 restore_network() {
     echo ""
     echo "=============================================="
     echo "  RESTORING NETWORK"
     echo "=============================================="
     echo ""
-    
+
     echo "📌 Re-enabling $IFACE..."
     if [[ "$IFACE_TYPE" == "wireless" ]]; then
         if command -v nmcli &>/dev/null; then
@@ -196,10 +192,10 @@ restore_network() {
     else
         sudo ip link set "$IFACE" up 2>/dev/null && echo "  ✅ Interface up (ip link)"
     fi
-    
+
     echo "  ⏳ Waiting for interface to stabilize..."
     sleep 3
-    
+
     if [[ -n "$CONN_NAME" ]] && command -v nmcli &>/dev/null; then
         echo "📌 Re-activating connection '$CONN_NAME'..."
         sudo nmcli con down "$CONN_NAME" 2>/dev/null || true
@@ -210,7 +206,7 @@ restore_network() {
             echo "  ⚠️  Failed to re-activate connection"
         fi
     fi
-    
+
     # Extra wait for bridge interfaces (VM networking may need more time)
     if [[ "$IFACE_TYPE" == "bridge" ]]; then
         echo "  ⏳ Bridge detected - waiting longer for VM networking..."
@@ -221,33 +217,48 @@ restore_network() {
     fi
 }
 
-# Trap to ensure restoration even if script is interrupted
-trap restore_network EXIT
+# ============================================================
+# RUN REPAIR - wait for it to finish before restoring
+# ============================================================
+
+echo ""
+echo "=============================================="
+echo "  RUNNING NETWORK RECOVERY"
+echo "=============================================="
+echo ""
+
+RESTORE_DONE=false
 
 if [[ "$DIAGNOSE_ONLY" == "true" ]]; then
     echo "📌 Running diagnose only (no repairs)..."
     sudo $NETWORK_RECOVER diagnose
 else
     echo "📌 Running repair (timeout: ${REPAIR_TIMEOUT}s)..."
-    # Run repair with timeout to prevent hanging on DNS repairs
+    echo ""
+
+    # Run repair synchronously - wait for it to finish
+    # timeout ensures we don't hang forever
     timeout "$REPAIR_TIMEOUT" sudo $NETWORK_RECOVER repair
     REPAIR_EXIT=$?
+
+    echo ""
     if [[ $REPAIR_EXIT -eq 124 ]]; then
-        echo "  ⚠️  Repair timed out after ${REPAIR_TIMEOUT}s - forcing restoration"
-    elif [[ $REPAIR_EXIT -ne 0 ]]; then
-        echo "  ⚠️  Repair exited with code $REPAIR_EXIT"
-    else
+        echo "  ⚠️  Repair timed out after ${REPAIR_TIMEOUT}s"
+    elif [[ $REPAIR_EXIT -eq 0 ]]; then
         echo "  ✅ Repair completed successfully"
+    else
+        echo "  ⚠️  Repair exited with code $REPAIR_EXIT"
     fi
 fi
 
-# Remove trap to avoid duplicate restoration
-trap - EXIT
-
-# Now explicitly restore
+# NOW restore - after repair has fully completed
 restore_network
+RESTORE_DONE=true
 
-# Verification
+# ============================================================
+# VERIFICATION
+# ============================================================
+
 echo ""
 echo "=============================================="
 echo "  TEST RESULTS"

@@ -596,45 +596,47 @@ check_https() {
     local all_pass=true
     local https_success=0
     
+    if ! command -v curl &>/dev/null; then
+        log_result "WARN" "curl not installed - skipping HTTPS tests"
+        return 1
+    fi
+    
     # Test captive portal detection
-    if command -v curl &>/dev/null; then
-        local portal_response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$CAPTIVE_PORTAL_TEST" 2>/dev/null)
-        if [[ "$portal_response" == "204" ]]; then
-            log_result "PASS" "No captive portal detected"
-        elif [[ -n "$portal_response" ]]; then
-            log_result "WARN" "Captive portal detected (HTTP $portal_response)"
-            all_pass=false
-        fi
+    # HTTP 000 means connection failed, not a captive portal
+    # Only flag as captive portal when we get an actual HTTP redirect (2xx/3xx)
+    local portal_response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$CAPTIVE_PORTAL_TEST" 2>/dev/null)
+    if [[ "$portal_response" == "204" ]]; then
+        log_result "PASS" "No captive portal detected"
+    elif [[ "$portal_response" == "000" ]]; then
+        log_result "INFO" "Captive portal test: connection failed (no internet)"
+    elif [[ "$portal_response" =~ ^[23][0-9][0-9]$ ]]; then
+        log_result "WARN" "Captive portal detected (HTTP $portal_response)"
+        log_result "INFO" "You may need to log in to the network"
+        all_pass=false
+    else
+        log_result "WARN" "Captive portal test: unexpected response (HTTP $portal_response)"
+        all_pass=false
     fi
     
     # Test HTTPS targets
     for target in "${HTTPS_TARGETS[@]}"; do
-        if command -v curl &>/dev/null; then
-            local http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout "$CURL_TIMEOUT" --max-time 10 "$target" 2>/dev/null)
-            if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
-                log_result "PASS" "HTTPS: $target (HTTP $http_code)"
-                ((https_success++))
-            else
-                log_result "WARN" "HTTPS: $target failed (HTTP $http_code)"
-                all_pass=false
-            fi
-        elif command -v wget &>/dev/null; then
-            if wget --spider --timeout=5 "$target" 2>/dev/null; then
-                log_result "PASS" "HTTPS: $target reachable"
-                ((https_success++))
-            else
-                log_result "WARN" "HTTPS: $target failed"
-                all_pass=false
-            fi
-        else
-            log_result "WARN" "curl/wget not installed - skipping HTTPS tests"
+        local http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout "$CURL_TIMEOUT" --max-time 10 "$target" 2>/dev/null)
+        if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
+            log_result "PASS" "HTTPS: $target (HTTP $http_code)"
+            ((https_success++))
+        elif [[ "$http_code" == "000" ]]; then
+            log_result "WARN" "HTTPS: $target (connection failed)"
             all_pass=false
-            break
+        else
+            log_result "WARN" "HTTPS: $target (HTTP $http_code)"
+            all_pass=false
         fi
     done
     
-    # Check for MTU issues
-    if [[ "$https_success" -lt 2 ]] && [[ -n "$DEFAULT_GATEWAY" ]]; then
+    # Skip MTU test if there's no internet (all HTTPS failed with 000)
+    if [[ "$https_success" -eq 0 ]]; then
+        log_result "INFO" "Skipping MTU test - no internet connectivity"
+    elif [[ "$https_success" -lt 2 ]] && [[ -n "$DEFAULT_GATEWAY" ]]; then
         log_result "INFO" "Testing MTU..."
         if ping -M do -s 1472 -c 1 "$DEFAULT_GATEWAY" &>/dev/null; then
             log_result "PASS" "MTU: 1500 works"
