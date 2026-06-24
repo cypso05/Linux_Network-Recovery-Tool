@@ -1009,18 +1009,26 @@ cmd_repair() {
     
     declare -gA LAYER_STATUS
     
-    # Run each check individually, capturing output
-    check_physical | tee -a "$diag_output"; LAYER_STATUS[physical]=${PIPESTATUS[0]}
-    check_link_layer | tee -a "$diag_output"; LAYER_STATUS[link]=${PIPESTATUS[0]}
-    check_ip_layer | tee -a "$diag_output"; LAYER_STATUS[ip]=${PIPESTATUS[0]}
-    check_routing | tee -a "$diag_output"; LAYER_STATUS[routing]=${PIPESTATUS[0]}
-    check_gateway | tee -a "$diag_output"; LAYER_STATUS[gateway]=${PIPESTATUS[0]}
-    check_internet | tee -a "$diag_output"; LAYER_STATUS[internet]=${PIPESTATUS[0]}
-    check_dns | tee -a "$diag_output"; LAYER_STATUS[dns]=${PIPESTATUS[0]}
-    check_https | tee -a "$diag_output"; LAYER_STATUS[https]=${PIPESTATUS[0]}
-    check_networkmanager | tee -a "$diag_output"; LAYER_STATUS[nm]=${PIPESTATUS[0]}
-    check_virtualization | tee -a "$diag_output"; LAYER_STATUS[virt]=${PIPESTATUS[0]}
-    check_kubernetes | tee -a "$diag_output"; LAYER_STATUS[k8s]=${PIPESTATUS[0]}
+    # Run each check individually to avoid subshell issues
+    run_check() {
+        local layer="$1"
+        shift
+        "$@" | tee -a "$diag_output"
+        LAYER_STATUS["$layer"]=${PIPESTATUS[0]}
+        return ${LAYER_STATUS["$layer"]}
+    }
+    
+    run_check physical check_physical
+    run_check link check_link_layer
+    run_check ip check_ip_layer
+    run_check routing check_routing
+    run_check gateway check_gateway
+    run_check internet check_internet
+    run_check dns check_dns
+    run_check https check_https
+    run_check nm check_networkmanager
+    run_check virt check_virtualization
+    run_check k8s check_kubernetes
     
     echo ""
     echo "=========================================="
