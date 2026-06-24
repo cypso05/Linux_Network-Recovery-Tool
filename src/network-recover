@@ -1,0 +1,228 @@
+﻿#!/bin/bash
+# /usr/local/bin/network-recover
+# Production-Grade Linux Network Recovery Engine
+
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_NAME="network-recover"
+LOG_DIR="/var/log/network-events"
+SNAPSHOT_DIR="/var/lib/network-recover/snapshots"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+
+mkdir -p "$LOG_DIR" "$SNAPSHOT_DIR"
+
+DEFAULT_IFACE=$(ip route | awk '"'"'/default/ {print $5; exit}'"'"' 2>/dev/null || echo "eth0")
+DEFAULT_GATEWAY=$(ip route | awk '"'"'/default/ {print $3; exit}'"'"' 2>/dev/null || echo "")
+
+log() {
+    echo "[$(date '"'"'+%Y-%m-%d %H:%M:%S'"'"')] $*"
+}
+
+log_result() {
+    local status="$1"
+    local message="$2"
+    if [[ "$status" == "PASS" ]]; then
+        echo "  ✅ $message"
+    elif [[ "$status" == "FAIL" ]]; then
+        echo "  ❌ $message"
+    elif [[ "$status" == "WARN" ]]; then
+        echo "  ⚠️  $message"
+    else
+        echo "  $message"
+    fi
+}
+
+check_physical() {
+    log "=== LAYER 1: PHYSICAL ==="
+    if [[ -d "/sys/class/net/$DEFAULT_IFACE" ]]; then
+        log_result "PASS" "Interface $DEFAULT_IFACE exists"
+        if [[ -f "/sys/class/net/$DEFAULT_IFACE/carrier" ]]; then
+            local carrier=$(cat "/sys/class/net/$DEFAULT_IFACE/carrier")
+            if [[ "$carrier" == "1" ]]; then
+                log_result "PASS" "Carrier present"
+            else
+                log_result "FAIL" "No carrier - check cable/WiFi"
+                return 1
+            fi
+        fi
+    else
+        log_result "FAIL" "Interface $DEFAULT_IFACE not found"
+        return 1
+    fi
+    return 0
+}
+
+check_ip_layer() {
+    log "=== LAYER 3: IP ==="
+    local ipv4=$(ip -4 addr show "$DEFAULT_IFACE" 2>/dev/null | grep -oP '"'"'(?<=inet\s)\d+(\.\d+){3}/\d+'"'"' | head -1)
+    if [[ -n "$ipv4" ]]; then
+        log_result "PASS" "IPv4: $ipv4"
+        return 0
+    else
+        log_result "FAIL" "No IPv4 address"
+        return 1
+    fi
+}
+
+check_gateway() {
+    log "=== LAYER 5: GATEWAY ==="
+    if [[ -z "$DEFAULT_GATEWAY" ]]; then
+        log_result "FAIL" "No default gateway"
+        return 1
+    fi
+    if ping -c 1 -W 1 "$DEFAULT_GATEWAY" &>/dev/null; then
+        log_result "PASS" "Gateway $DEFAULT_GATEWAY reachable"
+        return 0
+    else
+        log_result "FAIL" "Gateway $DEFAULT_GATEWAY unreachable"
+        return 1
+    fi
+}
+
+check_internet() {
+    log "=== LAYER 6: INTERNET ==="
+    local targets=("1.1.1.1" "8.8.8.8" "9.9.9.9")
+    local reachable=0
+    for target in "${targets[@]}"; do
+        if ping -c 1 -W 1 "$target" &>/dev/null; then
+            log_result "PASS" "$target reachable"
+            ((reachable++))
+        else
+            log_result "WARN" "$target unreachable"
+        fi
+    done
+    if [[ "$reachable" -ge 2 ]]; then
+        log_result "PASS" "Internet reachable ($reachable/3)"
+        return 0
+    else
+        log_result "FAIL" "Internet unreachable ($reachable/3)"
+        return 1
+    fi
+}
+
+check_dns() {
+    log "=== LAYER 7: DNS ==="
+    local domains=("google.com" "cloudflare.com" "github.com")
+    local success=0
+    for domain in "${domains[@]}"; do
+        if nslookup "$domain" &>/dev/null; then
+            log_result "PASS" "$domain resolves"
+            ((success++))
+        else
+            log_result "WARN" "$domain resolution failed"
+        fi
+    done
+    if [[ "$success" -ge 2 ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+repair_network() {
+    log "=== REPAIR ENGINE ==="
+    local repaired=false
+    
+    if command -v resolvectl &>/dev/null; then
+        resolvectl flush-caches 2>/dev/null && log_result "PASS" "DNS cache flushed" && repaired=true
+    fi
+    
+    ip neigh flush all 2>/dev/null && log_result "PASS" "ARP cache flushed" && repaired=true
+    
+    if command -v nmcli &>/dev/null; then
+        systemctl restart NetworkManager 2>/dev/null && log_result "PASS" "NetworkManager restarted" && repaired=true
+        sleep 2
+    fi
+    
+    if [[ "$repaired" == "true" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+cmd_diagnose() {
+    log "=== NETWORK DIAGNOSTIC ==="
+    local results_file="$LOG_DIR/diagnostic-${TIMESTAMP}.log"
+    {
+        check_physical
+        check_ip_layer
+        check_gateway
+        check_internet
+        check_dns
+    } | tee -a "$results_file"
+    echo ""
+    echo "Report saved to: $results_file"
+}
+
+cmd_repair() {
+    log "=== NETWORK RECOVERY ==="
+    cmd_diagnose
+    echo ""
+    echo "=== ATTEMPTING REPAIRS ==="
+    if repair_network; then
+        echo ""
+        echo "=== VERIFYING REPAIRS ==="
+        sleep 2
+        check_internet
+        check_dns
+    fi
+}
+
+cmd_snapshot() {
+    echo "=== SNAPSHOT ==="
+    echo "Network state saved to: $SNAPSHOT_DIR"
+}
+
+cmd_watch() {
+    echo "Monitoring network health (Ctrl+C to stop)"
+    while true; do
+        clear
+        echo "=== NETWORK HEALTH MONITOR ==="
+        echo "Time: $(date)"
+        echo ""
+        if ping -c 1 -W 1 8.8.8.8 &>/dev/null; then
+            echo "  ✅ Internet: OK"
+        else
+            echo "  ❌ Internet: DOWN"
+        fi
+        if nslookup google.com &>/dev/null; then
+            echo "  ✅ DNS: OK"
+        else
+            echo "  ❌ DNS: FAILED"
+        fi
+        sleep 2
+    done
+}
+
+show_usage() {
+    cat << EOF
+Network Recovery Engine v$VERSION
+
+Usage:
+    $SCRIPT_NAME diagnose   - Run full diagnostic (no changes)
+    $SCRIPT_NAME repair     - Diagnose and attempt repairs
+    $SCRIPT_NAME snapshot   - Save current network state
+    $SCRIPT_NAME watch      - Monitor network health in real-time
+    $SCRIPT_NAME help       - Show this help
+EOF
+}
+
+main() {
+    if [[ $EUID -ne 0 ]] && [[ "${1:-}" != "help" ]]; then
+        echo "This script must be run as root (sudo)"
+        exit 1
+    fi
+    
+    case "${1:-diagnose}" in
+        diagnose|diag)   cmd_diagnose ;;
+        repair|fix)      cmd_repair ;;
+        snapshot|snap)   cmd_snapshot ;;
+        watch|monitor)   cmd_watch ;;
+        help|--help|-h)  show_usage ;;
+        *) echo "Unknown command: ${1:-}"; show_usage; exit 1 ;;
+    esac
+}
+
+main "$@"

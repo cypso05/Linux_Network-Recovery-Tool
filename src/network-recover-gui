@@ -1,0 +1,39 @@
+﻿#!/bin/bash
+TITLE="Network Recovery"
+LOG_FILE="/tmp/network-recover-gui.log"
+
+pkill -f "zenity.*Network Recovery" 2>/dev/null || true
+
+if command -v notify-send &>/dev/null; then
+    notify-send -u normal -t 3000 "$TITLE" "Diagnosing network..."
+fi
+
+if command -v zenity &>/dev/null; then
+    (
+        echo "10"; echo "# Starting network diagnostics..."
+        echo "30"; echo "# Checking physical layer..."
+        echo "50"; echo "# Testing connectivity..."
+        echo "70"; echo "# Attempting repairs..."
+        echo "90"; echo "# Verifying..."
+        /usr/local/bin/network-recover repair 2>&1 | tee "$LOG_FILE"
+        echo "100"; echo "# Complete!"
+    ) | zenity --progress --title="$TITLE" --text="Diagnosing network..." \
+               --percentage=0 --auto-close --width=400 2>/dev/null
+else
+    /usr/local/bin/network-recover repair 2>&1 | tee "$LOG_FILE"
+fi
+
+RESULT=$?
+if [ $RESULT -eq 0 ]; then
+    if command -v notify-send &>/dev/null; then
+        notify-send -u normal -t 10000 "$TITLE" "Network connectivity restored successfully!"
+    fi
+    echo "Success - Network restored"
+else
+    if command -v notify-send &>/dev/null; then
+        notify-send -u critical -t 10000 "$TITLE" "Repairs failed - Check $LOG_FILE"
+    fi
+    echo "Repairs failed"
+fi
+
+exit $RESULT
