@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 #===============================================================================
 # Network Recovery Tool - GUI Wrapper
 # Shows a progress dialog while running diagnostics and repair

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 collect_nmcli() {
     echo "=== nmcli general status ==="
     nmcli general status 2>/dev/null || echo "  nmcli not available"

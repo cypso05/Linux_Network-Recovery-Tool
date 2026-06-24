@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 collect_journalctl() {
     echo "=== journalctl (NetworkManager last 50 lines) ==="
     journalctl -u NetworkManager -n 50 --no-pager 2>/dev/null || echo "  No NetworkManager logs available"

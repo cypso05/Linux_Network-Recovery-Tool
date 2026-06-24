@@ -607,13 +607,15 @@ check_networkmanager() {
         fi
     fi
     
-    # Check device status - FIXED: using awk instead of regex
-    nmcli device status 2>/dev/null | awk '$3 == "connected" {print}' | while read -r line; do
-        log_result "PASS" "$line"
+    # Check device status
+    nmcli device status 2>/dev/null | while read -r line; do
+        if [[ "$line" =~ ^[^ ]+[[:space:]]+[^ ]+[[:space:]]+connected ]]; then
+            log_result "PASS" "$line"
+        fi
     done
     
     # Check for stale connections
-    local stale_connections=$(nmcli connection show --active 2>/dev/null | grep -c " (stale)" || echo "0")
+    local stale_connections=$(nmcli connection show --active 2>/dev/null | grep -c " (stale)")
     if [[ "$stale_connections" -gt 0 ]]; then
         log_result "WARN" "Stale connections detected ($stale_connections)"
         all_pass=false
@@ -621,6 +623,7 @@ check_networkmanager() {
     
     [[ "$all_pass" == "true" ]] && return 0 || return 1
 }
+
 # ============================================================
 # LAYER 10: VIRTUALIZATION (KVM/Libvirt)
 # ============================================================

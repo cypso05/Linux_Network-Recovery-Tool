@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # repairs/nm - NetworkManager repair action
 # Usage: repair_nm
 

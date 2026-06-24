@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 echo "Testing Network Recovery Tool"
 echo "================================"
 echo ""

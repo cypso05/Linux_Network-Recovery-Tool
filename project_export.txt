@@ -1,6 +1,6 @@
 ﻿========================================
 PROJECT EXPORT
-Generated: 2026-06-24 22:16:10
+Generated: 2026-06-24 23:34:41
 
 Input Paths:
 F:\Linux_Network_Manager\network-recover
@@ -2231,8 +2231,8 @@ repair_routing() {
 
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\src\network-recover
-SIZE: 40.1 KB
-LAST MODIFIED: 06/24/2026 22:00:46
+SIZE: 40.16 KB
+LAST MODIFIED: 06/24/2026 22:55:08
 ----------------------------------------
 
 #!/bin/bash
@@ -2844,15 +2844,13 @@ check_networkmanager() {
         fi
     fi
     
-    # Check device status
-    nmcli device status 2>/dev/null | while read -r line; do
-        if [[ "$line" =~ ^[^ ]+[[:space:]]+[^ ]+[[:space:]]+connected ]]; then
-            log_result "PASS" "$line"
-        fi
+    # Check device status - FIXED: using awk instead of regex
+    nmcli device status 2>/dev/null | awk '$3 == "connected" {print}' | while read -r line; do
+        log_result "PASS" "$line"
     done
     
     # Check for stale connections
-    local stale_connections=$(nmcli connection show --active 2>/dev/null | grep -c " (stale)")
+    local stale_connections=$(nmcli connection show --active 2>/dev/null | grep -c " (stale)" || echo "0")
     if [[ "$stale_connections" -gt 0 ]]; then
         log_result "WARN" "Stale connections detected ($stale_connections)"
         all_pass=false
@@ -2860,7 +2858,6 @@ check_networkmanager() {
     
     [[ "$all_pass" == "true" ]] && return 0 || return 1
 }
-
 # ============================================================
 # LAYER 10: VIRTUALIZATION (KVM/Libvirt)
 # ============================================================
@@ -3247,6 +3244,7 @@ cmd_repair() {
     # Initialize layer status array
     declare -gA LAYER_STATUS
     
+    # Run all checks and capture output (with stderr redirected)
     {
         check_physical; LAYER_STATUS[physical]=$?
         check_link_layer; LAYER_STATUS[link]=$?
@@ -3259,7 +3257,7 @@ cmd_repair() {
         check_networkmanager; LAYER_STATUS[nm]=$?
         check_virtualization; LAYER_STATUS[virt]=$?
         check_kubernetes; LAYER_STATUS[k8s]=$?
-    } | tee -a "$diag_output"
+    } 2>&1 | tee -a "$diag_output"
     
     echo ""
     echo "=========================================="
@@ -4023,6 +4021,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- 48/
 |   |   |   |-- 4ff495a01c2778fa1708dbb28fc7e32ac31a47 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 52/
+|   |   |   |-- 772545fbe7b48854ad027c8b47533b42ecd21f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- a23006c5a34692146a0d7051601610ce44019f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 59/
 |   |   |   |-- 1da0ac875b0d5234412f966441e72cccd30f4d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -4032,10 +4031,13 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- 2c4a6182ef537de4f305b48ceb165169192221 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 69/
 |   |   |   |-- 03af704d82ce096db2bb0abba25c3048187f8b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- 63d6982de8946fd13a352ab75acc9867d1e47f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 74/
 |   |   |   |-- 23c83da2dc45a312219e5b828d18b6110ee4d8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 7bd61e0c40b5764f576bf36edb4dacd7520a3e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 9730316aa4a28409d974be1b59aa922daac1a4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |-- 76/
+|   |   |   |-- c4a941262663aa72ccb05b0db0678b80509756 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 77/
 |   |   |   |-- 5db7556cf47ccf0f03f723137f6c9110f97d7c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 7d/
@@ -4047,8 +4049,11 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- 15ec0fa5c8075f29d5afc82fbae4a0a2a08699 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 82/
 |   |   |   |-- 1e26f9225a1ccbe06d23e074579effad4137f9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- cc4cb507c0fbe2101bca469bf5b50c0c590987 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 87/
 |   |   |   |-- 823ac70dd0d931917e7974bdc558854417a088 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |-- 89/
+|   |   |   |-- f5b57e576b07933163f2e645b7fbed4352cfda [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 8f/
 |   |   |   |-- c2b003127b0790d70a79dca71550f3550909a1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 91/
@@ -4153,5 +4158,5 @@ EXPORT COMPLETE
 Files with content exported: 31
 Complete folder structure shown above
 Output file: F:\Linux_Network_Manager\network-recover\project_export.txt
-Completed: 2026-06-24 22:16:10
+Completed: 2026-06-24 23:34:41
 ========================================

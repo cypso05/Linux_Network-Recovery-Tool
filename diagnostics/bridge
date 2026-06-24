@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 check_bridge() {
     local bridge="${1:-$BRIDGE_IFACE}"
     local iface="${2:-$DEFAULT_IFACE}"

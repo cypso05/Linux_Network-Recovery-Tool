@@ -1,0 +1,14 @@
+$gitattr = @"
+* text=auto eol=lf
+*.sh text eol=lf
+diagnostics/* text eol=lf
+repairs/* text eol=lf
+collectors/* text eol=lf
+src/* text eol=lf
+*.md text eol=lf
+Makefile text eol=lf
+LICENSE text eol=lf
+*.txt text eol=lf
+"@
+[System.IO.File]::WriteAllText("F:\Linux_Network_Manager\network-recover\.gitattributes", $gitattr, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Created .gitattributes" -ForegroundColor Green

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # diagnostics/physical - physical layer diagnostic
 # Usage: check_physical [iface]
 # Enhanced with detailed physical layer information

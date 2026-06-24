@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # repairs/bridge - bridge repair action with slave re-attachment
 # Usage: repair_bridge [bridge] [slave_iface]
 

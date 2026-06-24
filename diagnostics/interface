@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # diagnostics/interface - interface layer diagnostic
 # Usage: check_interface [iface]
 # Enhanced with detailed interface information and production-ready output

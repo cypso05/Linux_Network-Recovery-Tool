@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # repairs/dhcp - DHCP repair action with static IP awareness
 # Usage: repair_dhcp [iface]
 

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 check_kvm() {
     if ! command -v virsh &>/dev/null; then
         echo "  ℹ️  libvirt not installed"

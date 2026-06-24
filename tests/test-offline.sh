@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # tests/test-offline.sh - Simulate offline conditions and test recovery
 # Usage: ./test-offline.sh [--diagnose-only] [--interface IFACE]
 

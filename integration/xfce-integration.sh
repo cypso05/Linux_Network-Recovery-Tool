@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 #===============================================================================
 # XFCE Panel Integration for Network Recovery Tool
 # Generic version - works on any XFCE panel configuration

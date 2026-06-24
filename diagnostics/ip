@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 check_ip() {
     local iface="${1:-${BRIDGE_IFACE:-$DEFAULT_IFACE}}"
     

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # repairs/dns - DNS repair action
 # Usage: repair_dns
 

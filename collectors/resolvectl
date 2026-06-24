@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 collect_resolvectl() {
     echo "=== resolvectl status ==="
     resolvectl status 2>/dev/null || echo "  resolvectl not available"

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 check_networkmanager() {
     if ! command -v nmcli &>/dev/null; then
         echo "  ℹ️  NetworkManager not installed"

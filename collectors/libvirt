@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 collect_libvirt() {
     if ! command -v virsh &>/dev/null; then
         echo "=== libvirt: not installed ==="

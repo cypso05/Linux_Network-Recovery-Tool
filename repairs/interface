@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # repairs/interface - interface repair action
 # Usage: repair_interface [iface]
 

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 check_gateway() {
     local gateway="${1:-$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)}"
     
