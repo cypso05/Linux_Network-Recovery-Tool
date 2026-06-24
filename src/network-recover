@@ -764,7 +764,7 @@ repair_network() {
         ((repair_attempt_count++))
         if command -v nmcli &>/dev/null; then
             if nmcli device status 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
-                nmcli device disconnect "$DEFAULT_IFACE" 2>/dev/null
+                nmcli device disconnect "$DEFAULT_IFACE" 2>/dev/null || true
                 sleep 1
                 if nmcli device connect "$DEFAULT_IFACE" 2>/dev/null; then
                     log_result "PASS" "Interface $DEFAULT_IFACE reconnected"
@@ -787,7 +787,7 @@ repair_network() {
         if [[ "$ip_method" == "dhcp" ]]; then
             log "INFO" "Renewing DHCP lease on $iface_to_repair"
             if command -v dhclient &>/dev/null; then
-                dhclient -r "$iface_to_repair" 2>/dev/null
+                dhclient -r "$iface_to_repair" 2>/dev/null || true
                 if dhclient "$iface_to_repair" 2>/dev/null; then
                     log_result "PASS" "DHCP lease renewed on $iface_to_repair"
                     ((repair_success_count++))
@@ -800,7 +800,7 @@ repair_network() {
             if command -v nmcli &>/dev/null; then
                 local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":${iface_to_repair}$" | cut -d: -f1)
                 if [[ -n "$conn_name" ]]; then
-                    nmcli con down "$conn_name" 2>/dev/null
+                    nmcli con down "$conn_name" 2>/dev/null || true
                     sleep 1
                     if nmcli con up "$conn_name" 2>/dev/null; then
                         log_result "PASS" "Static IP connection '$conn_name' restarted"
@@ -978,21 +978,19 @@ cmd_diagnose() {
     log "INFO" "=== NETWORK DIAGNOSTIC STARTED ==="
     local TIMESTAMP=$(generate_timestamp)
     local results_file="$LOG_DIR/diagnostic-${TIMESTAMP}.log"
-    
     {
-        check_physical
-        check_link_layer
-        check_ip_layer
-        check_routing
-        check_gateway
-        check_internet
-        check_dns
-        check_https
-        check_networkmanager
-        check_virtualization
-        check_kubernetes
+        check_physical 2>&1 || true
+        check_link_layer 2>&1 || true
+        check_ip_layer 2>&1 || true
+        check_routing 2>&1 || true
+        check_gateway 2>&1 || true
+        check_internet 2>&1 || true
+        check_dns 2>&1 || true
+        check_https 2>&1 || true
+        check_networkmanager 2>&1 || true
+        check_virtualization 2>&1 || true
+        check_kubernetes 2>&1 || true
     } | tee -a "$results_file"
-    
     generate_report "$results_file"
 }
 
@@ -1004,8 +1002,9 @@ cmd_repair() {
     log "INFO" "Pre-repair snapshot: $snapshot_file"
 
     local results_file="$LOG_DIR/recovery-${TIMESTAMP}.log"
-    local diag_output=$(mktemp)
-    trap 'rm -f "$diag_output"' EXIT
+    local diag_output
+    diag_output=$(mktemp)
+    trap "rm -f '$diag_output'" EXIT
 
     declare -gA LAYER_STATUS
 
@@ -1022,17 +1021,17 @@ cmd_repair() {
         return $result
     }
 
-    run_check physical check_physical
-    run_check link check_link_layer
-    run_check ip check_ip_layer
-    run_check routing check_routing
-    run_check gateway check_gateway
-    run_check internet check_internet
-    run_check dns check_dns
-    run_check https check_https
-    run_check nm check_networkmanager
-    run_check virt check_virtualization
-    run_check k8s check_kubernetes
+    run_check physical check_physical || true
+    run_check link check_link_layer || true
+    run_check ip check_ip_layer || true
+    run_check routing check_routing || true
+    run_check gateway check_gateway || true
+    run_check internet check_internet || true
+    run_check dns check_dns || true
+    run_check https check_https || true
+    run_check nm check_networkmanager || true
+    run_check virt check_virtualization || true
+    run_check k8s check_kubernetes || true
 
     echo ""
     echo "=========================================="
@@ -1049,9 +1048,9 @@ cmd_repair() {
     sleep 3
 
     echo -e "\n=== POST-REPAIR VERIFICATION ==="
-    check_internet
-    check_dns
-    check_https
+    check_internet || true
+    check_dns || true
+    check_https || true
 
     cat "$diag_output" | tee -a "$results_file"
     generate_report "$results_file"
