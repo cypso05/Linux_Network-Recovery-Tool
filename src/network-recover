@@ -1022,7 +1022,7 @@ cmd_repair() {
         check_networkmanager; LAYER_STATUS[nm]=$?
         check_virtualization; LAYER_STATUS[virt]=$?
         check_kubernetes; LAYER_STATUS[k8s]=$?
-    } | tee -a "$diag_output"
+        } 2>&1 | tee -a "$diag_output"
     
     echo ""
     echo "=========================================="
