@@ -33,6 +33,42 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Determine which network-recover binary to use
+find_network_recover() {
+    # Check if installed version exists
+    if command -v network-recover &>/dev/null; then
+        echo "network-recover"
+        return 0
+    fi
+    
+    # Check if local src version exists
+    if [[ -f "./src/network-recover" ]] && [[ -x "./src/network-recover" ]]; then
+        echo "./src/network-recover"
+        return 0
+    fi
+    
+    # Check if local src version exists but not executable
+    if [[ -f "./src/network-recover" ]]; then
+        chmod +x ./src/network-recover
+        echo "./src/network-recover"
+        return 0
+    fi
+    
+    echo ""
+    return 1
+}
+
+NETWORK_RECOVER=$(find_network_recover)
+if [[ -z "$NETWORK_RECOVER" ]]; then
+    echo "❌ network-recover not found!"
+    echo "   Please install with: sudo ./install.sh"
+    echo "   Or run from the repo root: cd ~/Linux_Network-Recovery-Tool"
+    exit 1
+fi
+
+echo "📌 Using: $NETWORK_RECOVER"
+echo ""
+
 echo "=============================================="
 echo "  NETWORK OFFLINE TEST"
 echo "=============================================="
@@ -139,10 +175,10 @@ echo ""
 
 if [[ "$DIAGNOSE_ONLY" == "true" ]]; then
     echo "📌 Running diagnose only (no repairs)..."
-    sudo /usr/local/bin/network-recover diagnose
+    sudo $NETWORK_RECOVER diagnose
 else
     echo "📌 Running repair..."
-    sudo /usr/local/bin/network-recover repair
+    sudo $NETWORK_RECOVER repair
 fi
 
 echo ""
@@ -242,14 +278,14 @@ echo "=============================================="
 if [[ "$INTERNET_OK" == "true" ]]; then
     echo "✅ Network recovery test PASSED"
     echo ""
-    echo "  Run 'sudo network-recover status' to verify connectivity"
+    echo "  Run 'sudo $NETWORK_RECOVER status' to verify connectivity"
     exit 0
 else
     echo "❌ Network recovery test FAILED"
     echo ""
     echo "  Manual recovery options:"
-    echo "    sudo network-recover diagnose"
-    echo "    sudo network-recover repair"
-    echo "    sudo network-recover status"
+    echo "    sudo $NETWORK_RECOVER diagnose"
+    echo "    sudo $NETWORK_RECOVER repair"
+    echo "    sudo $NETWORK_RECOVER status"
     exit 1
 fi
