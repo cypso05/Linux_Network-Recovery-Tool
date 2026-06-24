@@ -1,0 +1,101 @@
+﻿#!/bin/bash
+# repairs/routing - routing repair action
+# Usage: repair_routing
+
+repair_routing() {
+    echo "🔧 Repairing routing..."
+    
+    local gateway=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)
+    
+    # Always flush route cache first (gentle repair)
+    echo "  📌 Flushing route cache..."
+    if ip route flush cache 2>/dev/null; then
+        echo "  ✅ Route cache flushed"
+    else
+        echo "  ⚠️  Route cache flush failed (may not be supported)"
+    fi
+    
+    if [[ -z "$gateway" ]]; then
+        echo "  ⚠️  No default gateway found"
+        echo "  📌 Restarting NetworkManager to rebuild routes..."
+        
+        if command -v systemctl &>/dev/null; then
+            if systemctl restart NetworkManager 2>/dev/null; then
+                echo "  ✅ NetworkManager restarted"
+                sleep 3
+                
+                # Verify NM is running
+                if systemctl is-active NetworkManager &>/dev/null; then
+                    echo "  ✅ NetworkManager is running"
+                    
+                    # Check if gateway appeared
+                    local new_gateway=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)
+                    if [[ -n "$new_gateway" ]]; then
+                        echo "  ✅ Default gateway restored: $new_gateway"
+                        return 0
+                    else
+                        echo "  ⚠️  No default gateway after restart"
+                        return 1
+                    fi
+                else
+                    echo "  ❌ NetworkManager failed to start"
+                    return 1
+                fi
+            else
+                echo "  ❌ Failed to restart NetworkManager"
+                return 1
+            fi
+        else
+            echo "  ❌ systemctl not available - cannot restart NetworkManager"
+            return 1
+        fi
+    else
+        echo "  ✅ Default gateway: $gateway"
+        
+        # Verify gateway is reachable
+        echo "  📌 Testing gateway reachability..."
+        if ping -c 1 -W 2 "$gateway" &>/dev/null; then
+            echo "  ✅ Gateway $gateway reachable - routing OK"
+            return 0
+        else
+            echo "  ⚠️  Gateway unreachable - attempting repair..."
+            
+            # Try ARP refresh first
+            echo "  📌 Refreshing ARP entry for gateway..."
+            if arping -c 1 -I "$DEFAULT_IFACE" "$gateway" &>/dev/null 2>&1; then
+                echo "  ✅ ARP entry refreshed"
+                sleep 1
+                
+                # Retest gateway
+                if ping -c 1 -W 2 "$gateway" &>/dev/null; then
+                    echo "  ✅ Gateway now reachable"
+                    return 0
+                fi
+            fi
+            
+            # If still unreachable, restart NM
+            echo "  📌 Restarting NetworkManager to rebuild routes..."
+            if command -v systemctl &>/dev/null; then
+                if systemctl restart NetworkManager 2>/dev/null; then
+                    echo "  ✅ NetworkManager restarted"
+                    sleep 3
+                    
+                    # Check if gateway is now reachable
+                    if ping -c 1 -W 2 "$gateway" &>/dev/null; then
+                        echo "  ✅ Gateway now reachable"
+                        return 0
+                    else
+                        echo "  ❌ Gateway still unreachable after restart"
+                        return 1
+                    fi
+                else
+                    echo "  ❌ Failed to restart NetworkManager"
+                    return 1
+                fi
+            else
+                echo "  ❌ systemctl not available - cannot restart NetworkManager"
+                return 1
+            fi
+        fi
+    fi
+}

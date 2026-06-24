@@ -1,39 +1,203 @@
 ﻿#!/bin/bash
-TITLE="Network Recovery"
-LOG_FILE="/tmp/network-recover-gui.log"
+#===============================================================================
+# Network Recovery Tool - GUI Wrapper
+# Shows a progress dialog while running diagnostics and repair
+# Tracks actual progress from log output
+#===============================================================================
 
+TITLE="Network Recovery"
+LOG_FILE="/tmp/network-recover-gui-$(date +%Y%m%d-%H%M%S).log"
+RESULT_FILE="/tmp/network-recover-result.txt"
+
+# Kill any existing instance
 pkill -f "zenity.*Network Recovery" 2>/dev/null || true
 
+# Initial notification
 if command -v notify-send &>/dev/null; then
-    notify-send -u normal -t 3000 "$TITLE" "Diagnosing network..."
+    notify-send -u normal -t 3000 "$TITLE" "Starting network diagnostics..." \
+        --icon=network-wireless
 fi
 
+# Run the repair in background, capture output separately
 if command -v zenity &>/dev/null; then
+    # Start the actual repair in background, redirect to log file
+    /usr/local/bin/network-recover repair > "$LOG_FILE" 2>&1 &
+    REPAIR_PID=$!
+    
+    # Show progress bar that tracks actual repair progress
     (
-        echo "10"; echo "# Starting network diagnostics..."
-        echo "30"; echo "# Checking physical layer..."
-        echo "50"; echo "# Testing connectivity..."
-        echo "70"; echo "# Attempting repairs..."
-        echo "90"; echo "# Verifying..."
+        PROGRESS=0
+        TIMEOUT=0
+        FAILURE_SHOWN=false
+        echo "0" ; echo "# Starting network diagnostics..."
+        
+        while kill -0 $REPAIR_PID 2>/dev/null; do
+            # Wait for log file to appear
+            if [[ ! -f "$LOG_FILE" ]]; then
+                sleep 1
+                TIMEOUT=$((TIMEOUT + 1))
+                if [[ $TIMEOUT -eq 5 ]]; then
+                    echo "5" ; echo "# Waiting for diagnostics to start..."
+                elif [[ $TIMEOUT -gt 12 ]]; then
+                    echo "10" ; echo "# Still waiting..."
+                    TIMEOUT=0
+                fi
+                continue
+            fi
+            
+            # Layer 1: Physical (10%)
+            if grep -q "LAYER 1:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 10 ]]; then
+                PROGRESS=10
+                echo "$PROGRESS" ; echo "# Checking physical layer..."
+            fi
+            
+            # Layer 2: Link (20%)
+            if grep -q "LAYER 2:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 20 ]]; then
+                PROGRESS=20
+                echo "$PROGRESS" ; echo "# Checking link layer (bridge/interface)..."
+            fi
+            
+            # Layer 3: IP (30%)
+            if grep -q "LAYER 3:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 30 ]]; then
+                PROGRESS=30
+                echo "$PROGRESS" ; echo "# Checking IP layer..."
+            fi
+            
+            # Layer 4: Routing (38%)
+            if grep -q "LAYER 4:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 38 ]]; then
+                PROGRESS=38
+                echo "$PROGRESS" ; echo "# Checking routing..."
+            fi
+            
+            # Layer 5: Gateway (45%)
+            if grep -q "LAYER 5:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 45 ]]; then
+                PROGRESS=45
+                echo "$PROGRESS" ; echo "# Checking gateway..."
+            fi
+            
+            # Layer 6: Internet (55%)
+            if grep -q "LAYER 6:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 55 ]]; then
+                PROGRESS=55
+                echo "$PROGRESS" ; echo "# Testing internet connectivity..."
+            fi
+            
+            # Layer 7: DNS (65%)
+            if grep -q "LAYER 7:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 65 ]]; then
+                PROGRESS=65
+                echo "$PROGRESS" ; echo "# Checking DNS resolution..."
+            fi
+            
+            # Layer 8: HTTPS (72%)
+            if grep -q "LAYER 8:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 72 ]]; then
+                PROGRESS=72
+                echo "$PROGRESS" ; echo "# Testing HTTPS connectivity..."
+            fi
+            
+            # Layer 9: NetworkManager (78%)
+            if grep -q "LAYER 9:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 78 ]]; then
+                PROGRESS=78
+                echo "$PROGRESS" ; echo "# Checking NetworkManager..."
+            fi
+            
+            # Layer 10: Virtualization (82%)
+            if grep -q "LAYER 10:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 82 ]]; then
+                PROGRESS=82
+                echo "$PROGRESS" ; echo "# Checking virtualization..."
+            fi
+            
+            # Layer 11: Kubernetes (85%)
+            if grep -q "LAYER 11:" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 85 ]]; then
+                PROGRESS=85
+                echo "$PROGRESS" ; echo "# Checking Kubernetes..."
+            fi
+            
+            # Transition to repair (88%)
+            if grep -q "REPAIR ENGINE" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 88 ]]; then
+                PROGRESS=88
+                echo "$PROGRESS" ; echo "# Running repair engine..."
+            fi
+            
+            # Show failure notice once when entering repair phase
+            if [[ "$FAILURE_SHOWN" != "true" ]] && grep -q "❌" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -ge 85 ]]; then
+                echo "# Issues detected - attempting repairs..."
+                FAILURE_SHOWN=true
+            fi
+            
+            # Post-repair verification (95%)
+            if grep -q "POST-REPAIR VERIFICATION" "$LOG_FILE" 2>/dev/null && [[ $PROGRESS -lt 95 ]]; then
+                PROGRESS=95
+                echo "$PROGRESS" ; echo "# Verifying repairs..."
+            fi
+            
+            sleep 0.5
+        done
+        
+        # Wait for process to fully exit
+        wait $REPAIR_PID
+        REPAIR_EXIT=$?
+        
+        # Ensure we hit 100%
+        if [[ $PROGRESS -lt 100 ]]; then
+            echo "100" ; echo "# Complete!"
+        fi
+        sleep 1
+        
+        # Save result
+        echo $REPAIR_EXIT > "$RESULT_FILE"
+    ) | zenity --progress \
+        --title="$TITLE" \
+        --text="Diagnosing network..." \
+        --percentage=0 \
+        --auto-close \
+        --width=450 \
+        --no-cancel \
+        2>/dev/null
+    
+    # Read the actual result
+    if [[ -f "$RESULT_FILE" ]]; then
+        RESULT=$(cat "$RESULT_FILE")
+    else
+        RESULT=1
+    fi
+    
+else
+    # Fallback: no zenity, run in xterm or directly
+    if command -v xterm &>/dev/null; then
+        xterm -T "$TITLE" -e "/usr/local/bin/network-recover repair; read -p 'Press Enter to close...'" &
+        RESULT=0
+    else
         /usr/local/bin/network-recover repair 2>&1 | tee "$LOG_FILE"
-        echo "100"; echo "# Complete!"
-    ) | zenity --progress --title="$TITLE" --text="Diagnosing network..." \
-               --percentage=0 --auto-close --width=400 2>/dev/null
-else
-    /usr/local/bin/network-recover repair 2>&1 | tee "$LOG_FILE"
+        RESULT=${PIPESTATUS[0]}
+    fi
 fi
 
-RESULT=$?
-if [ $RESULT -eq 0 ]; then
+# Show final result
+if [[ "$RESULT" -eq 0 ]]; then
     if command -v notify-send &>/dev/null; then
-        notify-send -u normal -t 10000 "$TITLE" "Network connectivity restored successfully!"
+        notify-send -u normal -t 10000 "$TITLE" \
+            "✅ Network connectivity restored!\nCheck $LOG_FILE for details" \
+            --icon=network-wireless
     fi
-    echo "Success - Network restored"
+    if command -v zenity &>/dev/null; then
+        zenity --info \
+            --title="$TITLE" \
+            --text="✅ Network connectivity restored!\n\nFull report saved to:\n$LOG_FILE" \
+            --width=450 \
+            2>/dev/null &
+    fi
+    exit 0
 else
     if command -v notify-send &>/dev/null; then
-        notify-send -u critical -t 10000 "$TITLE" "Repairs failed - Check $LOG_FILE"
+        notify-send -u critical -t 10000 "$TITLE" \
+            "❌ Repairs failed\nCheck $LOG_FILE for details" \
+            --icon=dialog-error
     fi
-    echo "Repairs failed"
+    if command -v zenity &>/dev/null; then
+        zenity --error \
+            --title="$TITLE" \
+            --text="❌ Some repairs failed.\n\nFull report saved to:\n$LOG_FILE\n\nRun 'sudo network-recover diagnose' for details." \
+            --width=450 \
+            2>/dev/null &
+    fi
+    exit 1
 fi
-
-exit $RESULT

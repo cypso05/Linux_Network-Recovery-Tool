@@ -1,0 +1,15 @@
+﻿#!/bin/bash
+collect_iproute2() {
+    echo "=== ip addr show ==="
+    ip addr show 2>/dev/null
+    echo ""
+    echo "=== ip route show ==="
+    ip route show 2>/dev/null
+    echo ""
+    echo "=== ip neigh show ==="
+    ip neigh show 2>/dev/null
+    echo ""
+    echo "=== bridge link show ==="
+    bridge link show 2>/dev/null || echo "  No bridges"
+    return 0
+}

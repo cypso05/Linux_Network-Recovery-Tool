@@ -1,0 +1,125 @@
+﻿#!/bin/bash
+# diagnostics/physical - physical layer diagnostic
+# Usage: check_physical [iface]
+# Enhanced with detailed physical layer information
+
+check_physical() {
+    local all_pass=true
+    local iface="${1:-$DEFAULT_IFACE}"
+    
+    echo "  ┌─ Physical Layer: $iface"
+    
+    # Check if interface exists
+    if [[ ! -d "/sys/class/net/$iface" ]]; then
+        echo "  │  ❌ Interface does not exist"
+        echo "  └─────────────────────────────"
+        return 1
+    fi
+    
+    # Determine interface type
+    local iface_type="unknown"
+    if [[ -d "/sys/class/net/$iface/wireless" ]] || [[ -d "/sys/class/net/$iface/phy80211" ]]; then
+        iface_type="wireless"
+    elif [[ -d "/sys/class/net/$iface/bridge" ]]; then
+        iface_type="bridge"
+    else
+        iface_type="ethernet"
+    fi
+    echo "  │  Type: $iface_type"
+    
+    # Check carrier (link detection)
+    if [[ -f "/sys/class/net/$iface/carrier" ]]; then
+        local carrier=$(cat "/sys/class/net/$iface/carrier")
+        if [[ "$carrier" == "1" ]]; then
+            echo "  │  ✅ Carrier: present"
+        else
+            if [[ "$iface_type" == "wireless" ]]; then
+                echo "  │  ⚠️  Carrier: no WiFi connection"
+            else
+                echo "  │  ❌ Carrier: LOST - Check cable"
+            fi
+            all_pass=false
+        fi
+    fi
+    
+    # Check operstate
+    if [[ -f "/sys/class/net/$iface/operstate" ]]; then
+        local state=$(cat "/sys/class/net/$iface/operstate")
+        case "$state" in
+            up)
+                echo "  │  ✅ State: $state"
+                ;;
+            down)
+                echo "  │  ❌ State: $state (interface is down)"
+                all_pass=false
+                ;;
+            dormant)
+                echo "  │  ⚠️  State: $state (waiting for carrier)"
+                all_pass=false
+                ;;
+            *)
+                echo "  │  ❌ State: $state (unexpected)"
+                all_pass=false
+                ;;
+        esac
+    fi
+    
+    # Check link speed (ethernet only)
+    if [[ "$iface_type" == "ethernet" ]] && command -v ethtool &>/dev/null; then
+        if [[ -e "/sys/class/net/$iface/device" ]]; then
+            local speed=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Speed:" | awk '{print $2}')
+            local duplex=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Duplex:" | awk '{print $2}')
+            local link=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Link detected:" | awk '{print $3}')
+            
+            if [[ -n "$speed" ]] && [[ "$speed" != "Unknown!" ]]; then
+                echo "  │  Speed: $speed"
+            fi
+            if [[ -n "$duplex" ]] && [[ "$duplex" != "Unknown!" ]]; then
+                echo "  │  Duplex: $duplex"
+            fi
+            if [[ -n "$link" ]]; then
+                if [[ "$link" == "yes" ]]; then
+                    echo "  │  ✅ Link detected: yes"
+                else
+                    echo "  │  ❌ Link detected: no"
+                    all_pass=false
+                fi
+            fi
+        fi
+    fi
+    
+    # WiFi signal strength
+    if [[ "$iface_type" == "wireless" ]] && command -v iwconfig &>/dev/null; then
+        local signal=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Signal level=\K[0-9-]+' || echo "")
+        local quality=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Quality=\K[0-9/]+' || echo "")
+        if [[ -n "$signal" ]]; then
+            echo "  │  Signal: ${signal} dBm"
+            # Interpret signal strength
+            if [[ "$signal" -gt -50 ]]; then
+                echo "  │  📶 Excellent"
+            elif [[ "$signal" -gt -60 ]]; then
+                echo "  │  📶 Good"
+            elif [[ "$signal" -gt -70 ]]; then
+                echo "  │  📶 Fair"
+            else
+                echo "  │  📶 Poor"
+            fi
+        fi
+        if [[ -n "$quality" ]]; then
+            echo "  │  Quality: $quality"
+        fi
+    fi
+    
+    # Check for interface errors
+    local rx_errors=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo "0")
+    local tx_errors=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo "0")
+    if [[ "$rx_errors" != "0" ]] || [[ "$tx_errors" != "0" ]]; then
+        echo "  │  ⚠️  Errors: RX=$rx_errors, TX=$tx_errors"
+        all_pass=false
+    fi
+    
+    echo "  └─────────────────────────────"
+    echo ""
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}

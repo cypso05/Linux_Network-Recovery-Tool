@@ -1,0 +1,27 @@
+﻿#!/bin/bash
+check_bridge() {
+    local bridge="${1:-$BRIDGE_IFACE}"
+    local iface="${2:-$DEFAULT_IFACE}"
+    local all_pass=true
+    
+    if [[ -z "$bridge" ]]; then
+        echo "  ℹ️  No bridge configured"
+        return 0
+    fi
+    
+    if ip link show "$bridge" 2>/dev/null | grep -q "UP"; then
+        echo "  ✅ Bridge $bridge is UP"
+    else
+        echo "  ❌ Bridge $bridge is DOWN"
+        all_pass=false
+    fi
+    
+    if bridge link show "$bridge" 2>/dev/null | grep -q "$iface"; then
+        echo "  ✅ $iface enslaved to $bridge"
+    else
+        echo "  ❌ $iface NOT enslaved to $bridge"
+        all_pass=false
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}

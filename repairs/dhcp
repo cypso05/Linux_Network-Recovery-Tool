@@ -1,0 +1,95 @@
+﻿#!/bin/bash
+# repairs/dhcp - DHCP repair action with static IP awareness
+# Usage: repair_dhcp [iface]
+
+repair_dhcp() {
+    local iface="${1:-${BRIDGE_IFACE:-$DEFAULT_IFACE}}"
+    echo "🔧 Repairing IP on $iface..."
+    
+    # Detect if DHCP or static
+    local ip_method="static"
+    if command -v nmcli &>/dev/null; then
+        if nmcli -t -f DHCP4 device show "$iface" 2>/dev/null | grep -q 'DHCP4.OPTION'; then
+            ip_method="dhcp"
+        fi
+    else
+        # Fallback: check if dhclient is running or if interface has DHCP lease
+        if pgrep -f "dhclient.*$iface" &>/dev/null; then
+            ip_method="dhcp"
+        fi
+    fi
+    
+    echo "  ℹ️  IP method: $ip_method"
+    
+    if [[ "$ip_method" == "dhcp" ]]; then
+        if ! command -v dhclient &>/dev/null; then
+            echo "  ❌ dhclient not installed"
+            return 1
+        fi
+        echo "  📌 Renewing DHCP lease..."
+        dhclient -r "$iface" 2>/dev/null
+        if timeout 10 dhclient "$iface" 2>/dev/null; then
+            # Verify IP was assigned
+            local new_ip=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP '(?<=inet\s)[0-9.]+' | head -1)
+            if [[ -n "$new_ip" ]]; then
+                echo "  ✅ DHCP lease renewed on $iface"
+                echo "  ℹ️  New IP: $new_ip"
+                return 0
+            else
+                echo "  ⚠️  DHCP renewed but no IP assigned"
+                return 1
+            fi
+        else
+            echo "  ❌ DHCP renewal failed (timeout or error)"
+            return 1
+        fi
+    else
+        # Static IP - restart the connection via nmcli
+        echo "  📌 Restarting static IP connection..."
+        if command -v nmcli &>/dev/null; then
+            local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":${iface}$" | cut -d: -f1)
+            if [[ -n "$conn_name" ]]; then
+                nmcli con down "$conn_name" 2>/dev/null
+                sleep 1
+                if nmcli con up "$conn_name" 2>/dev/null; then
+                    echo "  ✅ Static IP connection '$conn_name' restarted"
+                    local current_ip=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP '(?<=inet\s)[0-9.]+' | head -1)
+                    [[ -n "$current_ip" ]] && echo "  ℹ️  IP: $current_ip"
+                    return 0
+                else
+                    echo "  ❌ Failed to restart connection '$conn_name'"
+                    echo "  📌 Attempting interface reset..."
+                    ip link set "$iface" down 2>/dev/null
+                    sleep 1
+                    ip link set "$iface" up 2>/dev/null
+                    if ip link show "$iface" | grep -q "UP"; then
+                        echo "  ✅ Interface $iface reset"
+                        return 0
+                    fi
+                fi
+            else
+                echo "  ⚠️  No active connection found for $iface"
+                echo "  📌 Attempting interface reset..."
+                ip link set "$iface" down 2>/dev/null
+                sleep 1
+                ip link set "$iface" up 2>/dev/null
+                if ip link show "$iface" | grep -q "UP"; then
+                    echo "  ✅ Interface $iface reset"
+                    return 0
+                fi
+            fi
+        else
+            # No nmcli - use ip link as fallback
+            echo "  📌 Resetting interface (ip link)..."
+            ip link set "$iface" down 2>/dev/null
+            sleep 1
+            ip link set "$iface" up 2>/dev/null
+            if ip link show "$iface" | grep -q "UP"; then
+                echo "  ✅ Interface $iface reset"
+                return 0
+            fi
+        fi
+        echo "  ❌ Failed to restart static IP connection"
+        return 1
+    fi
+}

@@ -1,0 +1,72 @@
+﻿#!/bin/bash
+# repairs/nm - NetworkManager repair action
+# Usage: repair_nm
+
+repair_nm() {
+    echo "🔧 Repairing NetworkManager..."
+    
+    # Check current status
+    if systemctl is-active NetworkManager &>/dev/null; then
+        echo "  ℹ️  NetworkManager is currently running"
+    else
+        echo "  ⚠️  NetworkManager is not running"
+    fi
+    
+    # Restart NetworkManager
+    if systemctl restart NetworkManager 2>/dev/null; then
+        echo "  ✅ NetworkManager restart initiated"
+        
+        # Wait for service to stabilize
+        echo "  ⏳ Waiting for NetworkManager to stabilize..."
+        local max_wait=10
+        local wait_count=0
+        
+        while [[ $wait_count -lt $max_wait ]]; do
+            if systemctl is-active NetworkManager &>/dev/null; then
+                echo "  ✅ NetworkManager is running"
+                break
+            fi
+            sleep 1
+            wait_count=$((wait_count + 1))
+        done
+        
+        if [[ $wait_count -eq $max_wait ]]; then
+            echo "  ⚠️  NetworkManager did not stabilize within ${max_wait}s"
+            echo "  ℹ️  Check status: systemctl status NetworkManager"
+            return 1
+        fi
+        
+        # Verify NM state via nmcli
+        if command -v nmcli &>/dev/null; then
+            sleep 2  # Give NM time to fully initialize
+            local nm_state=$(nmcli -t -f GENERAL.STATE general status 2>/dev/null | cut -d: -f2)
+            if [[ -n "$nm_state" ]]; then
+                echo "  ℹ️  NetworkManager state: $nm_state"
+                if [[ "$nm_state" == "connected" ]] || [[ "$nm_state" == "connecting" ]]; then
+                    echo "  ✅ NetworkManager is connected"
+                    return 0
+                else
+                    echo "  ⚠️  NetworkManager state is '$nm_state' - may need connection"
+                    return 1
+                fi
+            fi
+        fi
+        
+        return 0
+    else
+        echo "  ❌ Failed to restart NetworkManager"
+        
+        # Try fallback: kill and restart
+        echo "  📌 Attempting fallback restart..."
+        if pkill -f "NetworkManager" 2>/dev/null; then
+            sleep 2
+            if systemctl start NetworkManager 2>/dev/null; then
+                echo "  ✅ NetworkManager restarted (fallback)"
+                return 0
+            fi
+        fi
+        
+        echo "  ❌ All restart attempts failed"
+        return 1
+    fi
+}
