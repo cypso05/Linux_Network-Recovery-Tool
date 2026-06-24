@@ -616,9 +616,20 @@ check_networkmanager() {
         fi
     done < <(nmcli device status 2>/dev/null)
     
-    # Check for stale connections
-    local stale_connections
-    stale_connections=$(nmcli connection show --active 2>/dev/null | grep -c "stale" || echo "0")
+    # Check for stale connections - ROBUST VERSION
+    local stale_connections=0
+    local nm_output
+    nm_output=$(nmcli connection show --active 2>/dev/null || true)
+    if [[ -n "$nm_output" ]]; then
+        stale_connections=$(echo "$nm_output" | grep -c "stale" 2>/dev/null || echo "0")
+        # Ensure it's a clean number
+        stale_connections=$(echo "$stale_connections" | tr -d '[:space:]')
+        # Default to 0 if not a number
+        if ! [[ "$stale_connections" =~ ^[0-9]+$ ]]; then
+            stale_connections=0
+        fi
+    fi
+    
     if [[ "$stale_connections" -gt 0 ]]; then
         log_result "WARN" "Stale connections detected ($stale_connections)"
         all_pass=false
