@@ -53,7 +53,7 @@ Evidence‑Driven – Every incident generates a timestamped report, helping you
 Architecture
 The tool is modular and extensible, designed for clarity and maintainability.
 
-text
+
 network-recover/
 ├── diagnostics/           # Layer‑based testing modules
 │   ├── physical           # Link status
@@ -84,6 +84,8 @@ network-recover/
 │
 └── reports/               # Incident logs generated
     └── /var/log/network-recover/
+
+
 Layer‑Based Diagnostics
 The diagnostic process follows a strict sequential order, from the physical layer up to the application layer. The first failing layer is identified as the root cause candidate.
 
@@ -108,6 +110,7 @@ HTTPS Connectivity
 NetworkManager Health
 
 Virtualisation Dependencies
+
 
 Quick Start
 Installation
@@ -135,6 +138,7 @@ bash
 sudo network-recover watch
 Desktop Integration (XFCE)
 Right‑click the network icon in the system tray and select “Network Diagnose & Repair”.
+
 The tool will run with a progress dialog and show desktop notifications when the repair succeeds or fails.
 
 Example Output
@@ -167,11 +171,12 @@ Final Status: CONNECTED
 Evidence Collection
 Every incident generates a detailed, timestamped report to help you identify recurring problems.
 
-text
+
 /var/log/network-recover/
 ├── 2026-06-24-14-05-21.log
 ├── 2026-06-27-08-11-43.log
 └── 2026-07-02-22-30-15.log
+
 Each report includes:
 
 Interface state
@@ -194,7 +199,7 @@ KVM network information
 
 Recent NetworkManager logs (journalctl)
 
-System Requirements
+System Requirements: 
 Distribution: Any modern Linux distribution (Debian/Ubuntu, RHEL/CentOS/Fedora, Arch Linux, MX Linux, etc.)
 
 Init System: systemd
@@ -205,10 +210,10 @@ Virtualisation (optional): libvirt and bridge-utils for virtualisation‑related
 
 Dependencies: bash, iproute2, curl, nmcli, resolvectl, ping, grep, awk
 
-License
+License:
 This project is licensed under the MIT License – see the LICENSE file for details.
 
-Contributing
+Contributing:
 Contributions are welcome! Please feel free to submit a Pull Request or open an Issue to discuss improvements, new features, or bug reports.
 
 Fork the Project
@@ -221,11 +226,10 @@ Push to the Branch (git push origin feature/AmazingFeature)
 
 Open a Pull Request
 
-Acknowledgements
+Acknowledgements:
+
 Inspired by the built‑in network troubleshooting capabilities of Windows.
 
 Built for the Linux community to make network problem‑solving more intuitive and robust.
 
 Made with ❤️ for Linux users everywhere.
-
-text
