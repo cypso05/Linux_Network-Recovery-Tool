@@ -7,6 +7,7 @@ set -euo pipefail
 # Parse arguments
 DIAGNOSE_ONLY=false
 TEST_IFACE=""
+REPAIR_TIMEOUT=60  # seconds to wait for repair before forcing restoration
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -18,10 +19,15 @@ while [[ $# -gt 0 ]]; do
             TEST_IFACE="$2"
             shift 2
             ;;
+        --timeout|-t)
+            REPAIR_TIMEOUT="$2"
+            shift 2
+            ;;
         --help|-h)
-            echo "Usage: $0 [--diagnose-only] [--interface IFACE]"
+            echo "Usage: $0 [--diagnose-only] [--interface IFACE] [--timeout SECONDS]"
             echo "  --diagnose-only  Run diagnose only (no repairs)"
             echo "  --interface      Specify interface to test (default: auto-detect)"
+            echo "  --timeout        Timeout for repair command (default: 60s)"
             echo "  --help           Show this help"
             exit 0
             ;;
@@ -35,25 +41,19 @@ done
 
 # Determine which network-recover binary to use
 find_network_recover() {
-    # Check if installed version exists
     if command -v network-recover &>/dev/null; then
         echo "network-recover"
         return 0
     fi
-    
-    # Check if local src version exists
     if [[ -f "./src/network-recover" ]] && [[ -x "./src/network-recover" ]]; then
         echo "./src/network-recover"
         return 0
     fi
-    
-    # Check if local src version exists but not executable
     if [[ -f "./src/network-recover" ]]; then
         chmod +x ./src/network-recover
         echo "./src/network-recover"
         return 0
     fi
-    
     echo ""
     return 1
 }
@@ -76,7 +76,12 @@ echo ""
 
 # Detect interface
 if [[ -z "$TEST_IFACE" ]]; then
-    IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "wlan0")
+    IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "")
+    if [[ -z "$IFACE" ]]; then
+        # Fallback: find any interface with an IP
+        IFACE=$(ip -4 addr show 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | grep -v lo | head -1)
+    fi
+    [[ -z "$IFACE" ]] && IFACE="eth0"
 else
     IFACE="$TEST_IFACE"
 fi
@@ -87,7 +92,7 @@ echo "📌 Interface: $IFACE"
 if [[ -d "/sys/class/net/$IFACE/wireless" ]] || [[ -d "/sys/class/net/$IFACE/phy80211" ]]; then
     IFACE_TYPE="wireless"
     echo "📌 Type: WiFi"
-elif [[ -d "/sys/class/net/$IFACE/bridge" ]]; then
+elif [[ -d "/sys/class/net/$IFACE/bridge" ]] || ip link show "$IFACE" 2>/dev/null | grep -q "bridge"; then
     IFACE_TYPE="bridge"
     echo "📌 Type: Bridge"
 else
@@ -110,7 +115,8 @@ else
     echo "  ⚠️  Interface is DOWN"
 fi
 
-IP_ADDR=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP '(?<=inet\s)[0-9.]+' | head -1)
+# Use \K instead of lookbehind for grep portability
+IP_ADDR=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1)
 echo "  IP: ${IP_ADDR:-None}"
 
 GATEWAY=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null || echo "None")
@@ -143,7 +149,6 @@ echo ""
 # Disable interface
 echo "📌 Disabling $IFACE..."
 if [[ "$IFACE_TYPE" == "wireless" ]]; then
-    # For WiFi, use nmcli if available
     if command -v nmcli &>/dev/null; then
         sudo nmcli radio wifi off 2>/dev/null && echo "  ✅ WiFi disabled (nmcli)"
     else
@@ -173,64 +178,82 @@ echo "  RUNNING NETWORK RECOVERY"
 echo "=============================================="
 echo ""
 
+# Function to restore network regardless of repair outcome
+restore_network() {
+    echo ""
+    echo "=============================================="
+    echo "  RESTORING NETWORK"
+    echo "=============================================="
+    echo ""
+    
+    echo "📌 Re-enabling $IFACE..."
+    if [[ "$IFACE_TYPE" == "wireless" ]]; then
+        if command -v nmcli &>/dev/null; then
+            sudo nmcli radio wifi on 2>/dev/null && echo "  ✅ WiFi enabled (nmcli)"
+        else
+            sudo ip link set "$IFACE" up 2>/dev/null && echo "  ✅ Interface up (ip link)"
+        fi
+    else
+        sudo ip link set "$IFACE" up 2>/dev/null && echo "  ✅ Interface up (ip link)"
+    fi
+    
+    echo "  ⏳ Waiting for interface to stabilize..."
+    sleep 3
+    
+    if [[ -n "$CONN_NAME" ]] && command -v nmcli &>/dev/null; then
+        echo "📌 Re-activating connection '$CONN_NAME'..."
+        sudo nmcli con down "$CONN_NAME" 2>/dev/null || true
+        sleep 1
+        if sudo nmcli con up "$CONN_NAME" 2>/dev/null; then
+            echo "  ✅ Connection re-activated"
+        else
+            echo "  ⚠️  Failed to re-activate connection"
+        fi
+    fi
+    
+    # Extra wait for bridge interfaces (VM networking may need more time)
+    if [[ "$IFACE_TYPE" == "bridge" ]]; then
+        echo "  ⏳ Bridge detected - waiting longer for VM networking..."
+        sleep 10
+    else
+        echo "  ⏳ Waiting for network to stabilize..."
+        sleep 5
+    fi
+}
+
+# Trap to ensure restoration even if script is interrupted
+trap restore_network EXIT
+
 if [[ "$DIAGNOSE_ONLY" == "true" ]]; then
     echo "📌 Running diagnose only (no repairs)..."
     sudo $NETWORK_RECOVER diagnose
 else
-    echo "📌 Running repair..."
-    sudo $NETWORK_RECOVER repair
-fi
-
-echo ""
-echo "=============================================="
-echo "  RESTORING NETWORK"
-echo "=============================================="
-echo ""
-
-# Re-enable interface
-echo "📌 Re-enabling $IFACE..."
-if [[ "$IFACE_TYPE" == "wireless" ]]; then
-    if command -v nmcli &>/dev/null; then
-        sudo nmcli radio wifi on 2>/dev/null && echo "  ✅ WiFi enabled (nmcli)"
+    echo "📌 Running repair (timeout: ${REPAIR_TIMEOUT}s)..."
+    # Run repair with timeout to prevent hanging on DNS repairs
+    timeout "$REPAIR_TIMEOUT" sudo $NETWORK_RECOVER repair
+    REPAIR_EXIT=$?
+    if [[ $REPAIR_EXIT -eq 124 ]]; then
+        echo "  ⚠️  Repair timed out after ${REPAIR_TIMEOUT}s - forcing restoration"
+    elif [[ $REPAIR_EXIT -ne 0 ]]; then
+        echo "  ⚠️  Repair exited with code $REPAIR_EXIT"
     else
-        sudo ip link set "$IFACE" up 2>/dev/null && echo "  ✅ Interface up (ip link)"
-    fi
-else
-    sudo ip link set "$IFACE" up 2>/dev/null && echo "  ✅ Interface up (ip link)"
-fi
-
-# Wait for interface to come up
-echo "  ⏳ Waiting for interface to stabilize..."
-sleep 3
-
-# Re-activate connection
-if [[ -n "$CONN_NAME" ]] && command -v nmcli &>/dev/null; then
-    echo "📌 Re-activating connection '$CONN_NAME'..."
-    sudo nmcli con down "$CONN_NAME" 2>/dev/null || true
-    sleep 1
-    if sudo nmcli con up "$CONN_NAME" 2>/dev/null; then
-        echo "  ✅ Connection re-activated"
-    else
-        echo "  ⚠️  Failed to re-activate connection"
+        echo "  ✅ Repair completed successfully"
     fi
 fi
 
-# Wait for network to stabilize (longer for bridge setups with VMs)
-if [[ "$IFACE_TYPE" == "bridge" ]]; then
-    echo "  ⏳ Bridge detected - waiting longer for VM networking..."
-    sleep 10
-else
-    echo "  ⏳ Waiting for network to stabilize..."
-    sleep 5
-fi
+# Remove trap to avoid duplicate restoration
+trap - EXIT
 
+# Now explicitly restore
+restore_network
+
+# Verification
 echo ""
 echo "=============================================="
 echo "  TEST RESULTS"
 echo "=============================================="
 echo ""
 
-# Verify final state
 echo "📌 Final state:"
 if ip link show "$IFACE" | grep -q "UP"; then
     echo "  ✅ Interface is UP"
@@ -238,7 +261,7 @@ else
     echo "  ❌ Interface is DOWN"
 fi
 
-FINAL_IP=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP '(?<=inet\s)[0-9.]+' | head -1)
+FINAL_IP=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1)
 if [[ -n "$FINAL_IP" ]]; then
     echo "  ✅ IP: $FINAL_IP"
 else

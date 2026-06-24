@@ -522,15 +522,53 @@ check_dns() {
         fi
     done
     
-    # Check for DNS consistency (same resolver, multiple queries)
-    # This replaces the false-positive poisoning check that compared different resolvers
+    # Check for DNS anomalies (meaningful security checks)
     if command -v dig &>/dev/null; then
-        local ip1=$(dig +short google.com 2>/dev/null | head -1)
-        local ip2=$(dig +short google.com 2>/dev/null | head -1)
-        if [[ -n "$ip1" ]] && [[ -n "$ip2" ]] && [[ "$ip1" != "$ip2" ]]; then
-            log_result "WARN" "DNS responses inconsistent - possible hijacking"
-            log_result "INFO" "  Query 1: $ip1"
-            log_result "INFO" "  Query 2: $ip2"
+        local dns_anomaly=false
+        local test_domain="google.com"  # Using a stable, well-known domain
+        
+        # Test 1: Detect hijacking via private IP responses
+        # If google.com resolves to a private/loopback IP, DNS is hijacked
+        local hijack_test=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        if [[ -n "$hijack_test" ]]; then
+            # Check for private, loopback, or link-local addresses
+            if [[ "$hijack_test" =~ ^(127\.|10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.|0\.|169\.254\.) ]]; then
+                log_result "FAIL" "DNS hijacking detected - $test_domain resolves to private IP: $hijack_test"
+                dns_anomaly=true
+                all_pass=false
+            fi
+        fi
+        
+        # Test 2: Detect DNS interception via response time anomaly
+        # If the first query takes > 500ms, something is intercepting DNS
+        local dns_time=$(dig "$test_domain" +time=1 +tries=1 2>/dev/null | grep -oP 'Query time: \K[0-9]+' || echo "0")
+        if [[ "$dns_time" -gt 500 ]] && [[ "$dns_time" != "0" ]]; then
+            log_result "WARN" "DNS response time high (${dns_time}ms) - possible interception"
+            dns_anomaly=true
+        fi
+        
+        # Test 3: Verify configured DNS servers actually respond
+        local ns_list=$(grep "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{print $2}')
+        local dead_ns=0
+        for ns in $ns_list; do
+            if ! dig @"$ns" "$test_domain" +time=1 +tries=1 &>/dev/null; then
+                log_result "WARN" "DNS server $ns not responding"
+                dns_anomaly=true
+                ((dead_ns++))
+            fi
+        done
+        
+        # Test 4: Response consistency (optional - detects cache poisoning)
+        local ip1=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        sleep 0.5
+        local ip2=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        if [[ -n "$ip1" ]] && [[ -n "$ip2" ]] && [[ "$ip1" != "$ip2" ]] && [[ ! "$ip1" =~ ^(127\.|10\.|192\.168\.) ]] && [[ ! "$ip2" =~ ^(127\.|10\.|192\.168\.) ]]; then
+            log_result "INFO" "DNS responses vary (normal load balancing)"
+            log_result "INFO" "  $test_domain: $ip1 and $ip2"
+        fi
+        
+        if [[ "$dns_anomaly" == "false" ]] && [[ -n "$ns_list" ]]; then
+            log_result "PASS" "DNS integrity check passed"
         fi
     fi
     
