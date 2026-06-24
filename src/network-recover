@@ -1000,31 +1000,27 @@ cmd_repair() {
     log "INFO" "=== NETWORK RECOVERY STARTED ==="
     local TIMESTAMP=$(generate_timestamp)
     
-    # Take snapshot before any changes
     local snapshot_file=$(save_snapshot)
     log "INFO" "Pre-repair snapshot: $snapshot_file"
     
-    # Run diagnostic and capture layer status
     local results_file="$LOG_DIR/recovery-${TIMESTAMP}.log"
     local diag_output=$(mktemp)
     trap 'rm -f "$diag_output"' EXIT
     
-    # Initialize layer status array
     declare -gA LAYER_STATUS
     
-    {
-        check_physical; LAYER_STATUS[physical]=$?
-        check_link_layer; LAYER_STATUS[link]=$?
-        check_ip_layer; LAYER_STATUS[ip]=$?
-        check_routing; LAYER_STATUS[routing]=$?
-        check_gateway; LAYER_STATUS[gateway]=$?
-        check_internet; LAYER_STATUS[internet]=$?
-        check_dns; LAYER_STATUS[dns]=$?
-        check_https; LAYER_STATUS[https]=$?
-        check_networkmanager; LAYER_STATUS[nm]=$?
-        check_virtualization; LAYER_STATUS[virt]=$?
-        check_kubernetes; LAYER_STATUS[k8s]=$?
-        } 2>&1 | tee -a "$diag_output"
+    # Run each check individually, capturing output
+    check_physical | tee -a "$diag_output"; LAYER_STATUS[physical]=${PIPESTATUS[0]}
+    check_link_layer | tee -a "$diag_output"; LAYER_STATUS[link]=${PIPESTATUS[0]}
+    check_ip_layer | tee -a "$diag_output"; LAYER_STATUS[ip]=${PIPESTATUS[0]}
+    check_routing | tee -a "$diag_output"; LAYER_STATUS[routing]=${PIPESTATUS[0]}
+    check_gateway | tee -a "$diag_output"; LAYER_STATUS[gateway]=${PIPESTATUS[0]}
+    check_internet | tee -a "$diag_output"; LAYER_STATUS[internet]=${PIPESTATUS[0]}
+    check_dns | tee -a "$diag_output"; LAYER_STATUS[dns]=${PIPESTATUS[0]}
+    check_https | tee -a "$diag_output"; LAYER_STATUS[https]=${PIPESTATUS[0]}
+    check_networkmanager | tee -a "$diag_output"; LAYER_STATUS[nm]=${PIPESTATUS[0]}
+    check_virtualization | tee -a "$diag_output"; LAYER_STATUS[virt]=${PIPESTATUS[0]}
+    check_kubernetes | tee -a "$diag_output"; LAYER_STATUS[k8s]=${PIPESTATUS[0]}
     
     echo ""
     echo "=========================================="
@@ -1040,7 +1036,6 @@ cmd_repair() {
     echo "=========================================="
     sleep 3
     
-    # Re-run key tests
     echo -e "\n=== POST-REPAIR VERIFICATION ==="
     check_internet
     check_dns
