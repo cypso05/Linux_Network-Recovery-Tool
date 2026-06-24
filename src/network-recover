@@ -54,12 +54,16 @@ generate_timestamp() {
 mkdir -p "$LOG_DIR" "$SNAPSHOT_DIR"
 
 # Determine the default interface dynamically
-DEFAULT_IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "eth0")
+DEFAULT_IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "")
+if [[ -z "$DEFAULT_IFACE" ]]; then
+    # Fallback: try to find any up interface with an IP
+    DEFAULT_IFACE=$(ip -4 addr show | grep -oP '(?<=^[0-9]+: )\w+' | head -1 2>/dev/null || echo "eth0")
+fi
 DEFAULT_GATEWAY=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null || echo "")
 
 # Detect if we have a bridge (fixed regex)
 BRIDGE_IFACE=""
-for iface in $(ip -br link show | awk '{print $1}' | grep -v lo | sed 's/@.*//'); do
+for iface in $(ip -br link show 2>/dev/null | awk '{print $1}' | grep -v lo | sed 's/@.*//' || echo ""); do
     if ip link show "$iface" 2>/dev/null | grep -q "bridge"; then
         BRIDGE_IFACE="$iface"
         break
@@ -74,10 +78,6 @@ HAS_DOCKER=$(command -v docker &>/dev/null && echo "true" || echo "false")
 # ============================================================
 # SOURCE MODULAR COMPONENTS (if available)
 # ============================================================
-# These override the built-in functions with modular versions
-# when the tool is installed with full modular support.
-# Falls back gracefully to built-in implementations if modules
-# are not present (standalone/core-only installation).
 readonly MODULE_DIR="/usr/local/lib/network-recover"
 
 if [[ -d "$MODULE_DIR/diagnostics" ]]; then
@@ -134,13 +134,13 @@ save_snapshot() {
         cat /etc/os-release 2>/dev/null || echo "No os-release"
         echo ""
         echo "=== Interface Info ==="
-        ip addr show
+        ip addr show 2>/dev/null || echo "No interfaces"
         echo ""
         echo "=== Route Table ==="
-        ip route show
+        ip route show 2>/dev/null || echo "No routes"
         echo ""
         echo "=== ARP Table ==="
-        ip neigh show
+        ip neigh show 2>/dev/null || echo "No ARP"
         echo ""
         echo "=== Bridge Info ==="
         bridge link show 2>/dev/null || echo "No bridges found"
@@ -160,7 +160,7 @@ save_snapshot() {
         journalctl -u NetworkManager -n 50 --no-pager 2>/dev/null || echo "No NetworkManager logs"
         echo ""
         echo "=== Kernel Network Stats ==="
-        cat /proc/net/dev
+        cat /proc/net/dev 2>/dev/null || echo "No stats"
         echo ""
         echo "=== End Snapshot ==="
     } > "$snapshot_file"
@@ -173,6 +173,10 @@ save_snapshot() {
 
 detect_ip_method() {
     local iface="$1"
+    if [[ -z "$iface" ]]; then
+        echo "unknown"
+        return
+    fi
     # Check if DHCP is configured via NetworkManager
     if command -v nmcli &>/dev/null; then
         if nmcli -t -f DHCP4 device show "$iface" 2>/dev/null | grep -q 'DHCP4.OPTION'; then
@@ -196,6 +200,11 @@ detect_ip_method() {
 check_physical() {
     log "INFO" "=== LAYER 1: PHYSICAL ==="
     local all_pass=true
+    
+    if [[ -z "$DEFAULT_IFACE" ]]; then
+        log_result "FAIL" "No interface detected"
+        return 1
+    fi
     
     # Check if interface exists
     if [[ ! -d "/sys/class/net/$DEFAULT_IFACE" ]]; then
@@ -249,8 +258,13 @@ check_link_layer() {
     log "INFO" "=== LAYER 2: LINK LAYER ==="
     local all_pass=true
     
+    if [[ -z "$DEFAULT_IFACE" ]]; then
+        log_result "FAIL" "No interface detected"
+        return 1
+    fi
+    
     # Check if interface is UP
-    if ip link show "$DEFAULT_IFACE" | grep -q "UP"; then
+    if ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "UP"; then
         log_result "PASS" "Interface $DEFAULT_IFACE is UP"
     else
         log_result "FAIL" "Interface $DEFAULT_IFACE is DOWN"
@@ -259,7 +273,7 @@ check_link_layer() {
     
     # Check bridge if present
     if [[ -n "$BRIDGE_IFACE" ]]; then
-        if ip link show "$BRIDGE_IFACE" | grep -q "UP"; then
+        if ip link show "$BRIDGE_IFACE" 2>/dev/null | grep -q "UP"; then
             log_result "PASS" "Bridge $BRIDGE_IFACE is UP"
         else
             log_result "FAIL" "Bridge $BRIDGE_IFACE is DOWN"
@@ -267,7 +281,7 @@ check_link_layer() {
         fi
         
         # Check if interface is enslaved to bridge
-        if bridge link show "$BRIDGE_IFACE" 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
+        if bridge link show 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
             log_result "PASS" "$DEFAULT_IFACE enslaved to $BRIDGE_IFACE"
         else
             log_result "WARN" "$DEFAULT_IFACE NOT enslaved to $BRIDGE_IFACE"
@@ -277,7 +291,7 @@ check_link_layer() {
     
     # Check for vnet interfaces (KVM)
     if [[ "$HAS_LIBVIRT" == "true" ]]; then
-        local vnets=$(ip link show | grep -oP 'vnet\d+' | sort -u)
+        local vnets=$(ip link show 2>/dev/null | grep -oP 'vnet\d+' | sort -u)
         if [[ -n "$vnets" ]]; then
             for vnet in $vnets; do
                 if bridge link show 2>/dev/null | grep -q "$vnet"; then
@@ -301,8 +315,13 @@ check_ip_layer() {
     log "INFO" "=== LAYER 3: IP ==="
     local all_pass=true
     
-    # Check IPv4 address
     local iface_to_check="${BRIDGE_IFACE:-$DEFAULT_IFACE}"
+    if [[ -z "$iface_to_check" ]]; then
+        log_result "FAIL" "No interface to check"
+        return 1
+    fi
+    
+    # Check IPv4 address
     local ipv4=$(ip -4 addr show "$iface_to_check" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -1)
     
     if [[ -n "$ipv4" ]]; then
@@ -352,7 +371,7 @@ check_routing() {
     fi
     
     # Check for multiple default routes (common problem)
-    local default_count=$(ip route | grep -c "^default")
+    local default_count=$(ip route 2>/dev/null | grep -c "^default" || echo "0")
     if [[ "$default_count" -gt 1 ]]; then
         log_result "WARN" "Multiple default routes found ($default_count)"
         ip route | grep "^default"
@@ -360,14 +379,14 @@ check_routing() {
     fi
     
     # Check for blackhole routes
-    if ip route | grep -q "blackhole"; then
+    if ip route 2>/dev/null | grep -q "blackhole"; then
         log_result "WARN" "Blackhole routes detected"
         ip route | grep "blackhole"
         all_pass=false
     fi
     
     # Check route metrics
-    if ip route | grep -q "metric"; then
+    if ip route 2>/dev/null | grep -q "metric"; then
         log_result "INFO" "Route metrics configured"
     fi
     
@@ -389,9 +408,9 @@ check_gateway() {
     local all_pass=true
     
     # Check ARP entry
-    if ip neigh show "$DEFAULT_GATEWAY" | grep -q "REACHABLE"; then
+    if ip neigh show "$DEFAULT_GATEWAY" 2>/dev/null | grep -q "REACHABLE"; then
         log_result "PASS" "Gateway ARP: REACHABLE"
-    elif ip neigh show "$DEFAULT_GATEWAY" | grep -q "STALE"; then
+    elif ip neigh show "$DEFAULT_GATEWAY" 2>/dev/null | grep -q "STALE"; then
         log_result "WARN" "Gateway ARP: STALE - may need refresh"
         all_pass=false
     else
@@ -459,10 +478,10 @@ check_dns() {
     
     # Check resolv.conf
     if [[ -f /etc/resolv.conf ]]; then
-        local nameservers=$(grep "^nameserver" /etc/resolv.conf | wc -l)
+        local nameservers=$(grep "^nameserver" /etc/resolv.conf 2>/dev/null | wc -l)
         if [[ "$nameservers" -gt 0 ]]; then
             log_result "PASS" "DNS servers configured ($nameservers)"
-            grep "^nameserver" /etc/resolv.conf | while read -r line; do
+            grep "^nameserver" /etc/resolv.conf 2>/dev/null | while read -r line; do
                 log_result "INFO" "  $line"
             done
         else
@@ -575,7 +594,7 @@ check_https() {
 }
 
 # ============================================================
-# LAYER 9: NETWORKMANAGER
+# LAYER 9: NETWORKMANAGER - FULLY CORRECTED
 # ============================================================
 
 check_networkmanager() {
@@ -637,6 +656,7 @@ check_networkmanager() {
     
     [[ "$all_pass" == "true" ]] && return 0 || return 1
 }
+
 # ============================================================
 # LAYER 10: VIRTUALIZATION (KVM/Libvirt)
 # ============================================================
@@ -713,6 +733,16 @@ repair_network() {
     local repair_success_count=0
     local repair_attempt_count=0
     local iface_to_repair="${BRIDGE_IFACE:-$DEFAULT_IFACE}"
+    
+    if [[ -z "$iface_to_repair" ]]; then
+        log_result "WARN" "No interface to repair - attempting to find one"
+        iface_to_repair=$(ip -br link show 2>/dev/null | grep -v lo | awk '{print $1}' | head -1)
+        if [[ -z "$iface_to_repair" ]]; then
+            log_result "FAIL" "No network interface found"
+            return 1
+        fi
+    fi
+    
     local ip_method=$(detect_ip_method "$iface_to_repair")
     
     log "INFO" "IP method detected: $ip_method on $iface_to_repair"
@@ -774,14 +804,14 @@ repair_network() {
         log "INFO" "Stage 3: Reconnecting interface (physical/link layer failed)"
         ((repair_attempt_count++))
         if command -v nmcli &>/dev/null; then
-            if nmcli device status 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
-                nmcli device disconnect "$DEFAULT_IFACE" 2>/dev/null || true
+            if nmcli device status 2>/dev/null | grep -q "$iface_to_repair"; then
+                nmcli device disconnect "$iface_to_repair" 2>/dev/null || true
                 sleep 1
-                if nmcli device connect "$DEFAULT_IFACE" 2>/dev/null; then
-                    log_result "PASS" "Interface $DEFAULT_IFACE reconnected"
+                if nmcli device connect "$iface_to_repair" 2>/dev/null; then
+                    log_result "PASS" "Interface $iface_to_repair reconnected"
                     ((repair_success_count++))
                 else
-                    log_result "WARN" "Failed to reconnect $DEFAULT_IFACE"
+                    log_result "WARN" "Failed to reconnect $iface_to_repair"
                 fi
                 sleep 2
             fi
@@ -862,12 +892,12 @@ repair_network() {
             ((repair_success_count++))
             
             # Re-enslave interface if needed
-            if ! bridge link show "$BRIDGE_IFACE" 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
-                log "INFO" "Re-enslaving $DEFAULT_IFACE to $BRIDGE_IFACE"
-                if ip link set "$DEFAULT_IFACE" master "$BRIDGE_IFACE" 2>/dev/null; then
-                    log_result "PASS" "$DEFAULT_IFACE re-enslaved to $BRIDGE_IFACE"
+            if ! bridge link show 2>/dev/null | grep -q "$iface_to_repair"; then
+                log "INFO" "Re-enslaving $iface_to_repair to $BRIDGE_IFACE"
+                if ip link set "$iface_to_repair" master "$BRIDGE_IFACE" 2>/dev/null; then
+                    log_result "PASS" "$iface_to_repair re-enslaved to $BRIDGE_IFACE"
                 else
-                    log_result "WARN" "Failed to re-enslave $DEFAULT_IFACE"
+                    log_result "WARN" "Failed to re-enslave $iface_to_repair"
                 fi
             fi
         else
@@ -1111,10 +1141,10 @@ cmd_watch() {
         fi
         
         # Interface
-        if ip link show "$DEFAULT_IFACE" | grep -q "UP"; then
+        if [[ -n "$DEFAULT_IFACE" ]] && ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "UP"; then
             echo "  ✅ Interface: $DEFAULT_IFACE (UP)"
         else
-            echo "  ❌ Interface: $DEFAULT_IFACE (DOWN)"
+            echo "  ❌ Interface: ${DEFAULT_IFACE:-'None'} (DOWN)"
         fi
         
         echo ""
