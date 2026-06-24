@@ -53,17 +53,17 @@ generate_timestamp() {
 
 mkdir -p "$LOG_DIR" "$SNAPSHOT_DIR"
 
-# Determine the default interface dynamically
+# Determine the default interface dynamically with fallback
 DEFAULT_IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "")
 if [[ -z "$DEFAULT_IFACE" ]]; then
-    # Fallback: try to find any up interface with an IP
-    DEFAULT_IFACE=$(ip -4 addr show | grep -oP '(?<=^[0-9]+: )\w+' | head -1 2>/dev/null || echo "eth0")
+    # No default route - find any interface with an IP address
+    DEFAULT_IFACE=$(ip -4 addr show 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | grep -v lo | head -1 || echo "eth0")
 fi
 DEFAULT_GATEWAY=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null || echo "")
 
 # Detect if we have a bridge (fixed regex)
 BRIDGE_IFACE=""
-for iface in $(ip -br link show 2>/dev/null | awk '{print $1}' | grep -v lo | sed 's/@.*//' || echo ""); do
+for iface in $(ip -br link show 2>/dev/null | awk '{print $1}' | grep -v lo | sed 's/@.*//'); do
     if ip link show "$iface" 2>/dev/null | grep -q "bridge"; then
         BRIDGE_IFACE="$iface"
         break
@@ -78,6 +78,10 @@ HAS_DOCKER=$(command -v docker &>/dev/null && echo "true" || echo "false")
 # ============================================================
 # SOURCE MODULAR COMPONENTS (if available)
 # ============================================================
+# These override the built-in functions with modular versions
+# when the tool is installed with full modular support.
+# Falls back gracefully to built-in implementations if modules
+# are not present (standalone/core-only installation).
 readonly MODULE_DIR="/usr/local/lib/network-recover"
 
 if [[ -d "$MODULE_DIR/diagnostics" ]]; then
@@ -321,8 +325,8 @@ check_ip_layer() {
         return 1
     fi
     
-    # Check IPv4 address
-    local ipv4=$(ip -4 addr show "$iface_to_check" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -1)
+    # Check IPv4 address - FIXED: using \K instead of lookbehind
+    local ipv4=$(ip -4 addr show "$iface_to_check" 2>/dev/null | grep -oP 'inet\s\K\d+(\.\d+){3}/\d+' | head -1)
     
     if [[ -n "$ipv4" ]]; then
         log_result "PASS" "IPv4: $ipv4"
@@ -343,8 +347,8 @@ check_ip_layer() {
         all_pass=false
     fi
     
-    # Check IPv6
-    local ipv6=$(ip -6 addr show "$iface_to_check" 2>/dev/null | grep -oP '(?<=inet6\s)[a-f0-9:]+' | grep -v "^::1" | head -1)
+    # Check IPv6 - FIXED: using \K instead of lookbehind
+    local ipv6=$(ip -6 addr show "$iface_to_check" 2>/dev/null | grep -oP 'inet6\s\K[a-f0-9:]+' | grep -v "^::1" | head -1)
     if [[ -n "$ipv6" ]]; then
         log_result "INFO" "IPv6: $ipv6"
     else
@@ -594,7 +598,7 @@ check_https() {
 }
 
 # ============================================================
-# LAYER 9: NETWORKMANAGER - FULLY CORRECTED
+# LAYER 9: NETWORKMANAGER
 # ============================================================
 
 check_networkmanager() {
@@ -975,7 +979,7 @@ cmd_status() {
     echo "Host: $(hostname)"
     echo "------------------------------------------"
     echo "Interface: $DEFAULT_IFACE"
-    echo "IP: $(ip -4 addr show ${BRIDGE_IFACE:-$DEFAULT_IFACE} 2>/dev/null | grep -oP '(?<=inet\s)[0-9.]+' | head -1 || echo 'None')"
+    echo "IP: $(ip -4 addr show ${BRIDGE_IFACE:-$DEFAULT_IFACE} 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1 || echo 'None')"
     echo "Gateway: ${DEFAULT_GATEWAY:-'None'}"
     [[ -n "$BRIDGE_IFACE" ]] && echo "Bridge: $BRIDGE_IFACE"
     echo "------------------------------------------"
@@ -1107,7 +1111,7 @@ cmd_snapshot() {
     echo "  Interface: $DEFAULT_IFACE"
     echo "  Gateway: ${DEFAULT_GATEWAY:-'None'}"
     echo "  Bridge: ${BRIDGE_IFACE:-'None'}"
-    echo "  IP: $(ip -4 addr show "${BRIDGE_IFACE:-$DEFAULT_IFACE}" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1 || echo 'None')"
+    echo "  IP: $(ip -4 addr show "${BRIDGE_IFACE:-$DEFAULT_IFACE}" 2>/dev/null | grep -oP 'inet\s\K\d+(\.\d+){3}' | head -1 || echo 'None')"
 }
 
 cmd_watch() {
