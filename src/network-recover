@@ -999,25 +999,29 @@ cmd_diagnose() {
 cmd_repair() {
     log "INFO" "=== NETWORK RECOVERY STARTED ==="
     local TIMESTAMP=$(generate_timestamp)
-    
+
     local snapshot_file=$(save_snapshot)
     log "INFO" "Pre-repair snapshot: $snapshot_file"
-    
+
     local results_file="$LOG_DIR/recovery-${TIMESTAMP}.log"
     local diag_output=$(mktemp)
     trap 'rm -f "$diag_output"' EXIT
-    
+
     declare -gA LAYER_STATUS
-    
+
     # Run each check individually to avoid subshell issues
     run_check() {
         local layer="$1"
         shift
-        "$@" | tee -a "$diag_output"
-        LAYER_STATUS["$layer"]=${PIPESTATUS[0]}
-        return ${LAYER_STATUS["$layer"]}
+        local tmp_file=$(mktemp)
+        "$@" > "$tmp_file" 2>&1
+        local result=$?
+        LAYER_STATUS["$layer"]=$result
+        cat "$tmp_file" | tee -a "$diag_output"
+        rm -f "$tmp_file"
+        return $result
     }
-    
+
     run_check physical check_physical
     run_check link check_link_layer
     run_check ip check_ip_layer
@@ -1029,29 +1033,29 @@ cmd_repair() {
     run_check nm check_networkmanager
     run_check virt check_virtualization
     run_check k8s check_kubernetes
-    
+
     echo ""
     echo "=========================================="
     echo "    ATTEMPTING REPAIRS"
     echo "=========================================="
-    
+
     repair_network
     local repair_result=$?
-    
+
     echo ""
     echo "=========================================="
     echo "    VERIFYING REPAIRS"
     echo "=========================================="
     sleep 3
-    
+
     echo -e "\n=== POST-REPAIR VERIFICATION ==="
     check_internet
     check_dns
     check_https
-    
+
     cat "$diag_output" | tee -a "$results_file"
     generate_report "$results_file"
-    
+
     return $repair_result
 }
 
