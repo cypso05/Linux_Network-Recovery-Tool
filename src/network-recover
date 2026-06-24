@@ -216,20 +216,31 @@ check_physical() {
         return 1
     fi
     
-    # Check carrier
-    if [[ -f "/sys/class/net/$DEFAULT_IFACE/carrier" ]]; then
-        local carrier=$(cat "/sys/class/net/$DEFAULT_IFACE/carrier")
+    # Check carrier - with bridge interface support
+    if [[ -f "/sys/class/net/$DEFAULT_IFACE/carrier" ]] && [[ -r "/sys/class/net/$DEFAULT_IFACE/carrier" ]]; then
+        local carrier=$(cat "/sys/class/net/$DEFAULT_IFACE/carrier" 2>/dev/null || echo "0")
         if [[ "$carrier" == "1" ]]; then
             log_result "PASS" "Carrier: present"
+        elif [[ "$carrier" != "0" ]]; then
+            # Bridge or virtual interface without carrier support
+            log_result "INFO" "Carrier: not applicable for this interface type"
         else
             log_result "FAIL" "Carrier: LOST - Check cable/WiFi"
             all_pass=false
+        fi
+    else
+        # Bridge interfaces often have carrier file but can't be read
+        # Check if it's a bridge interface
+        if ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "bridge"; then
+            log_result "INFO" "Carrier: not applicable for bridge interface"
+        else
+            log_result "INFO" "Carrier: not available for this interface"
         fi
     fi
     
     # Check operstate
     if [[ -f "/sys/class/net/$DEFAULT_IFACE/operstate" ]]; then
-        local state=$(cat "/sys/class/net/$DEFAULT_IFACE/operstate")
+        local state=$(cat "/sys/class/net/$DEFAULT_IFACE/operstate" 2>/dev/null || echo "unknown")
         if [[ "$state" == "up" ]]; then
             log_result "PASS" "Interface state: $state"
         else
@@ -511,14 +522,15 @@ check_dns() {
         fi
     done
     
-    # Check for DNS poisoning
+    # Check for DNS consistency (same resolver, multiple queries)
+    # This replaces the false-positive poisoning check that compared different resolvers
     if command -v dig &>/dev/null; then
-        local ip1=$(dig "@1.1.1.1" google.com +short 2>/dev/null | head -1)
-        local ip2=$(dig "@8.8.8.8" google.com +short 2>/dev/null | head -1)
+        local ip1=$(dig +short google.com 2>/dev/null | head -1)
+        local ip2=$(dig +short google.com 2>/dev/null | head -1)
         if [[ -n "$ip1" ]] && [[ -n "$ip2" ]] && [[ "$ip1" != "$ip2" ]]; then
-            log_result "WARN" "DNS poisoning suspected - different answers from different resolvers"
-            log_result "INFO" "  1.1.1.1: $ip1"
-            log_result "INFO" "  8.8.8.8: $ip2"
+            log_result "WARN" "DNS responses inconsistent - possible hijacking"
+            log_result "INFO" "  Query 1: $ip1"
+            log_result "INFO" "  Query 2: $ip2"
         fi
     fi
     
