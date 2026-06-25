@@ -1,101 +1,128 @@
-﻿const API = window.location.origin;
-let es = null;
+const API = window.location.origin;
+
+async function runAction(action) {
+    const output = document.getElementById('output');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    
+    // Clear previous output
+    output.innerHTML = '';
+    
+    // Show progress
+    progressContainer.style.display = 'flex';
+    progressFill.style.width = '0%';
+    progressText.textContent = '0%';
+    
+    // Reset layers
+    document.querySelectorAll('.layer').forEach(el => {
+        el.className = 'layer';
+    });
+    
+    // Add status message
+    addLog(`🚀 Running ${action}...`, 'info');
+    
+    try {
+        const response = await fetch(`${API}/api/${action}`);
+        const data = await response.json();
+        
+        if (data.ok) {
+            // Parse the output line by line
+            const lines = data.output.split('\n');
+            let layerCount = 0;
+            
+            lines.forEach((line, index) => {
+                if (line.trim() === '') return;
+                
+                // Determine status
+                let status = 'info';
+                if (line.includes('✅')) status = 'pass';
+                else if (line.includes('❌')) status = 'fail';
+                else if (line.includes('⚠️')) status = 'warn';
+                else if (line.includes('Connected')) status = 'pass';
+                else if (line.includes('Internet')) status = 'pass';
+                
+                addLog(line.trim(), status);
+                
+                // Update progress
+                const progress = Math.min(((index + 1) / lines.length) * 100, 100);
+                progressFill.style.width = progress + '%';
+                progressText.textContent = Math.round(progress) + '%';
+                
+                // Update layer status
+                if (line.includes('LAYER') || line.includes('=== LAYER')) {
+                    const layerMatch = line.match(/LAYER\s+(\d+)/);
+                    if (layerMatch) {
+                        const layerNum = parseInt(layerMatch[1]);
+                        const layerEl = document.querySelector(`.layer[data-layer="${layerNum}"]`);
+                        if (layerEl) {
+                            layerEl.className = 'layer active';
+                        }
+                    }
+                }
+            });
+            
+            // Final progress
+            progressFill.style.width = '100%';
+            progressText.textContent = '100%';
+            
+            if (data.exit_code === 0) {
+                addLog('✅ Action completed successfully!', 'success');
+            } else {
+                addLog(`⚠️ Action completed with exit code: ${data.exit_code}`, 'warn');
+            }
+        } else {
+            addLog(`❌ Error: ${data.error || 'Unknown error'}`, 'fail');
+        }
+    } catch (error) {
+        addLog(`❌ Connection error: ${error.message}`, 'fail');
+    }
+    
+    // Hide progress after delay
+    setTimeout(() => {
+        progressContainer.style.display = 'none';
+    }, 3000);
+}
+
+function addLog(message, type = 'info') {
+    const output = document.getElementById('output');
+    const div = document.createElement('div');
+    div.className = `log-line ${type}`;
+    div.textContent = message;
+    output.appendChild(div);
+    output.scrollTop = output.scrollHeight;
+}
+
+function clearOutput() {
+    const output = document.getElementById('output');
+    output.innerHTML = '<div class="placeholder">Click an action to begin</div>';
+    document.querySelectorAll('.layer').forEach(el => {
+        el.className = 'layer';
+    });
+}
 
 async function checkStatus() {
     try {
-        const r = await fetch(`${API}/api/status`);
-        const d = await r.json();
+        const response = await fetch(`${API}/api/status`);
+        const data = await response.json();
         const dot = document.getElementById('statusDot');
-        const txt = document.getElementById('statusText');
-        if (d.ok && d.out.includes('Connected')) {
-            dot.className = 'status-dot on'; txt.textContent = 'Connected';
+        const text = document.getElementById('statusText');
+        
+        if (data.ok && data.output.includes('Connected')) {
+            dot.className = 'dot online';
+            text.textContent = 'Online';
         } else {
-            dot.className = 'status-dot off'; txt.textContent = 'Disconnected';
+            dot.className = 'dot offline';
+            text.textContent = 'Offline';
         }
-    } catch(e) {}
-}
-
-function resetUI() {
-    document.getElementById('log').innerHTML = '';
-    document.querySelectorAll('.layer').forEach(l => l.className = 'layer');
-    document.getElementById('progressWrap').style.display = 'flex';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressPct').textContent = '0%';
-}
-
-function addLog(msg, status) {
-    const log = document.getElementById('log');
-    const div = document.createElement('div');
-    div.className = `log-line ${status || ''}`;
-    div.textContent = msg;
-    log.appendChild(div);
-    log.scrollTop = log.scrollHeight;
-}
-
-function setProgress(pct) {
-    document.getElementById('progressFill').style.width = pct + '%';
-    document.getElementById('progressPct').textContent = Math.round(pct) + '%';
-    if (pct >= 100) setTimeout(() => {
-        document.getElementById('progressWrap').style.display = 'none';
-    }, 1500);
-}
-
-function setLayer(layer, status) {
-    const el = document.querySelector(`.layer[data-l="${layer}"]`);
-    if (el) { el.classList.add('active', status || ''); }
-}
-
-async function doAction(action) {
-    if (action === 'repair' && !confirm('⚠️ Repair may disrupt connections. Continue?')) return;
-    resetUI();
-    
-    if (action === 'status' || action === 'snapshot') {
-        addLog(`Running ${action}...`, 'info');
-        const r = await fetch(`${API}/api/${action}`);
-        const d = await r.json();
-        if (d.ok) {
-            d.out.split('\n').forEach(line => {
-                if (!line.trim()) return;
-                let s = 'info';
-                if (line.includes('✅')) s = 'pass';
-                if (line.includes('❌')) s = 'fail';
-                if (line.includes('⚠️')) s = 'warn';
-                addLog(line.trim(), s);
-            });
-        } else {
-            addLog(d.err || 'Error', 'fail');
-        }
-        setProgress(100);
-        return;
+    } catch (error) {
+        const dot = document.getElementById('statusDot');
+        const text = document.getElementById('statusText');
+        dot.className = 'dot offline';
+        text.textContent = 'Connection Error';
     }
-    
-    // Stream actions
-    if (es) es.close();
-    es = new EventSource(`${API}/api/stream/${action}`);
-    let progress = 0;
-    
-    es.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.type === 'log') {
-            addLog(d.msg, d.status || 'info');
-            progress = Math.min(progress + 1, 90);
-            setProgress(progress);
-        }
-        if (d.type === 'layer') {
-            setLayer(d.layer, d.status || 'active');
-            progress = Math.floor((d.layer / 11) * 95);
-            setProgress(progress);
-        }
-        if (d.type === 'done') {
-            setProgress(100);
-            es.close(); es = null;
-            addLog(d.code === 0 ? '✅ Complete!' : `⚠️ Exit code: ${d.code}`, d.code === 0 ? 'pass' : 'fail');
-        }
-    };
-    es.onerror = () => { if (es) { addLog('Connection lost', 'fail'); es.close(); es = null; } };
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    checkStatus();
-    setInterval(checkStatus, 30000);
-});
+// Check status every 30 seconds
+checkStatus();
+setInterval(checkStatus, 30000);

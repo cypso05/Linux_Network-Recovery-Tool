@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network Recovery Tool - Self-Contained Web Backend"""
+"""Network Recovery Tool - Web Backend"""
 
 import http.server
 import json
@@ -7,8 +7,10 @@ import subprocess
 import os
 import sys
 import argparse
+import threading
+import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 WEB_DIR = Path(__file__).parent
 STATIC_DIR = WEB_DIR / "static"
@@ -19,8 +21,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
     
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         
+        # API endpoints
         if path == "/api/status":
             self.json_response(self.run_cmd(["status"]))
         elif path == "/api/diagnose":
@@ -29,76 +33,72 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             self.json_response(self.run_cmd(["repair"]))
         elif path == "/api/snapshot":
             self.json_response(self.run_cmd(["snapshot"]))
-        elif path == "/api/stream/diagnose":
-            self.stream_cmd(["diagnose"])
-        elif path == "/api/stream/repair":
-            self.stream_cmd(["repair"])
         else:
+            # Serve static files
             super().do_GET()
+    
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        
+        if path == "/api/action":
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                action = data.get('action', 'status')
+                
+                # Run the command
+                result = self.run_cmd([action])
+                self.json_response(result)
+            except Exception as e:
+                self.json_response({"ok": False, "error": str(e)})
+        else:
+            self.send_response(404)
+            self.end_headers()
     
     def run_cmd(self, args):
         try:
-            r = subprocess.run(["sudo", NETWORK_RECOVER] + args,
-                capture_output=True, text=True, timeout=120)
-            return {"ok": r.returncode == 0, "out": r.stdout, "err": r.stderr}
+            # Use sudo with the full path
+            cmd = ["sudo", NETWORK_RECOVER] + args
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            # Parse output for better formatting
+            output = result.stdout
+            if result.stderr:
+                output += "\n" + result.stderr
+            
+            return {
+                "ok": result.returncode == 0,
+                "output": output,
+                "exit_code": result.returncode
+            }
         except subprocess.TimeoutExpired:
-            return {"ok": False, "err": "Timeout"}
+            return {"ok": False, "error": "Command timed out"}
         except Exception as e:
-            return {"ok": False, "err": str(e)}
-    
-    def stream_cmd(self, args):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        
-        p = subprocess.Popen(["sudo", NETWORK_RECOVER] + args,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        
-        layer_map = {
-            "LAYER 1": (1, "Physical"), "LAYER 2": (2, "Link"),
-            "LAYER 3": (3, "IP"), "LAYER 4": (4, "Routing"),
-            "LAYER 5": (5, "Gateway"), "LAYER 6": (6, "Internet"),
-            "LAYER 7": (7, "DNS"), "LAYER 8": (8, "HTTPS"),
-            "LAYER 9": (9, "NetworkManager"), "LAYER 10": (10, "Virtualization"),
-            "LAYER 11": (11, "Kubernetes")
-        }
-        
-        for line in p.stdout:
-            data = {"type": "log", "msg": line.strip()}
-            if "?" in line: data["status"] = "pass"
-            elif "?" in line: data["status"] = "fail"
-            elif "??" in line: data["status"] = "warn"
-            elif "??" in line: data["status"] = "info"
-            
-            for key, (num, name) in layer_map.items():
-                if key in line:
-                    data.update({"type": "layer", "layer": num, "name": name})
-                    break
-            
-            self.wfile.write(f"data: {json.dumps(data)}\n\n".encode())
-            self.wfile.flush()
-        
-        p.wait()
-        self.wfile.write(f'data: {{"type":"done","code":{p.returncode}}}\n\n'.encode())
-        self.wfile.flush()
+            return {"ok": False, "error": str(e)}
     
     def json_response(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=9876)
+    parser.add_argument("--host", type=str, default="0.0.0.0")
     args = parser.parse_args()
     
-    server = http.server.HTTPServer(("127.0.0.1", args.port), APIHandler)
-    print(f"Network Recovery Web UI: http://localhost:{args.port}")
+    server = http.server.HTTPServer((args.host, args.port), APIHandler)
+    print(f"🌐 Network Recovery Web UI: http://{args.host}:{args.port}")
+    print(f"📋 Press Ctrl+C to stop")
+    
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        print("\n👋 Shutting down...")
         server.shutdown()
 
 if __name__ == "__main__":
