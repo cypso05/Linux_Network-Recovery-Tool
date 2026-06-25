@@ -61,6 +61,16 @@ if [[ -z "$DEFAULT_IFACE" ]]; then
 fi
 DEFAULT_GATEWAY=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null || echo "")
 
+# ============================================================
+# ALLOW INTERFACE OVERRIDE VIA ENVIRONMENT VARIABLE
+# ============================================================
+# For testing/scripting: export NETWORK_RECOVER_IFACE=br0
+# This ensures the test script can specify which interface to repair
+# even when the default route is missing.
+if [[ -n "${NETWORK_RECOVER_IFACE:-}" ]]; then
+    DEFAULT_IFACE="$NETWORK_RECOVER_IFACE"
+fi
+
 # Detect if we have a bridge (fixed regex)
 BRIDGE_IFACE=""
 for iface in $(ip -br link show 2>/dev/null | awk '{print $1}' | grep -v lo | sed 's/@.*//'); do
