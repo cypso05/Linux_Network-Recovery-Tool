@@ -3,20 +3,27 @@
 readonly PORT=9876
 readonly WEB_DIR="/usr/local/lib/network-recover/web"
 
+# Get the original user (not root)
+ORIGINAL_USER=${SUDO_USER:-$(whoami)}
+ORIGINAL_HOME=$(eval echo ~$ORIGINAL_USER)
+
 # Check if already running
 if pgrep -f "python3.*server.py" > /dev/null 2>&1; then
-    xdg-open "http://localhost:$PORT" 2>/dev/null || true
+    echo "Server is running, opening browser..."
+    # Run Firefox as the original user, not root
+    sudo -u $ORIGINAL_USER DISPLAY=:0 firefox "http://localhost:$PORT" 2>/dev/null &
     exit 0
 fi
 
-# Start server
+# Start server in background (needs root for network operations)
 cd "$WEB_DIR"
-python3 server.py --port "$PORT" &
+python3 server.py --port "$PORT" --host 0.0.0.0 &
 SERVER_PID=$!
-sleep 1
+sleep 2
 
-# Open browser
-xdg-open "http://localhost:$PORT" 2>/dev/null || true
+# Open browser as the original user
+echo "Opening browser..."
+sudo -u $ORIGINAL_USER DISPLAY=:0 firefox "http://localhost:$PORT" 2>/dev/null &
 
 # Wait for server
 wait $SERVER_PID
