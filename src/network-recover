@@ -72,27 +72,16 @@ if [[ -n "${NETWORK_RECOVER_IFACE:-}" ]]; then
 fi
 
 # ============================================================
-# IMPROVED BRIDGE DETECTION (multi-method)
+# IMPROVED BRIDGE DETECTION (fixed – finds the bridge, not slave)
 # ============================================================
 BRIDGE_IFACE=""
 
-# Method 1: Check via bridge link (most reliable)
-if command -v bridge &>/dev/null; then
-    for iface in $(bridge link show 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | sed 's/@.*//'); do
-        if bridge link show "$iface" 2>/dev/null | grep -q "master"; then
-            BRIDGE_IFACE="$iface"
-            break
-        fi
-    done
+# Method 1: Use ip to list bridge devices
+if command -v ip &>/dev/null; then
+    BRIDGE_IFACE=$(ip -br link show type bridge 2>/dev/null | awk '{print $1}' | head -1)
 fi
 
-# Method 2: Check via NetworkManager (if bridge detection failed)
-if [[ -z "$BRIDGE_IFACE" ]] && command -v nmcli &>/dev/null; then
-    BRIDGE_IFACE=$(nmcli -t -f TYPE,DEVICE connection show --active 2>/dev/null | \
-        grep "^bridge:" | cut -d: -f2 | head -1)
-fi
-
-# Method 3: Check via sysfs (fallback)
+# Method 2: Check via sysfs (fallback)
 if [[ -z "$BRIDGE_IFACE" ]]; then
     for iface in /sys/class/net/*; do
         if [[ -d "$iface/bridge" ]]; then
@@ -102,7 +91,13 @@ if [[ -z "$BRIDGE_IFACE" ]]; then
     done
 fi
 
-# If still empty, use DEFAULT_IFACE (fallback)
+# Method 3: Check via NetworkManager (last resort)
+if [[ -z "$BRIDGE_IFACE" ]] && command -v nmcli &>/dev/null; then
+    BRIDGE_IFACE=$(nmcli -t -f TYPE,DEVICE connection show --active 2>/dev/null | \
+        grep "^bridge:" | cut -d: -f2 | head -1)
+fi
+
+# If still empty, fallback to DEFAULT_IFACE
 if [[ -z "$BRIDGE_IFACE" ]]; then
     BRIDGE_IFACE="$DEFAULT_IFACE"
 fi
