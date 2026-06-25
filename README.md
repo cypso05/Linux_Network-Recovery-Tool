@@ -42,7 +42,7 @@ Based on comprehensive testing across all 11 OSI layers, the free version is **p
 ✅ 4 VM(s) detected
 ✅ VMs will reconnect automatically
 
-text
+
 
 ### ✅ **Recovery: 100% SUCCESS**
 - Network restored after complete outage
@@ -99,7 +99,7 @@ text
 LAYER 6: INTERNET REACHABILITY → ✅ Internet reachable
 LAYER 8: HTTPS & BROWSING → ❌ Connection failed
 
-text
+
 **What's happening:** The tool reports HTTPS failure even when internet works. This is because the HTTPS test is too strict - it doesn't follow redirects properly.
 
 **Workaround:** Internet is actually working. Use `ping 8.8.8.8` or browse the web to confirm.
@@ -109,7 +109,7 @@ text
 #### 2. Root-Cause Repair Order
 Interface DOWN → DNS repairs attempted first
 
-text
+
 **What's happening:** When the interface is down, the tool tries to fix DNS before fixing the interface.
 
 **Workaround:** The tool still recovers successfully (as shown in the offline test).
@@ -119,7 +119,7 @@ text
 #### 3. Bridge Detection
 Bridge: 'None' (even though br0 exists)
 
-text
+
 **What's happening:** Cosmetic bug - bridge is detected and works, but the variable isn't displayed correctly.
 
 **Workaround:** None needed - bridge detection and management works.
@@ -129,7 +129,7 @@ text
 #### 4. Captive Portal Logic
 ℹ️ Captive portal test: connection failed (no internet)
 
-text
+
 **What's happening:** The tool treats "connection failed" as "no internet" instead of distinguishing portal detection.
 
 **Workaround:** None needed - recovery still works.
@@ -198,7 +198,7 @@ Evidence‑Driven – Every incident generates a timestamped report, helping you
 Architecture
 The tool is modular and extensible, designed for clarity and maintainability.
 
-text
+...
 network-recover/
 ├── diagnostics/           # Layer‑based testing modules
 │   ├── physical           # Link status
@@ -235,6 +235,8 @@ network-recover/
 │
 └── reports/               # Incident logs generated
     └── /var/log/network-events/
+...
+
 
 # Layer‑Based Diagnostics
 The diagnostic process follows a strict sequential order, from the physical layer up to the application layer. The first failing layer is identified as the root cause candidate.
@@ -305,7 +307,7 @@ bash
 cd Linux_Network-Recovery-Tool
 ./integration/xfce-integration.sh
 Example Output
-text
+...
 ==========================================
     NETWORK RECOVERY REPORT
 ==========================================
@@ -333,50 +335,53 @@ Applied Repair:
 
 Final Status: CONNECTED
 ==========================================
+...
 
 # Evidence Collection :
 Every incident generates a detailed, timestamped report to help you identify recurring problems. check and clean the log files as needed
 
-text
+...
 /var/log/network-events/
 ├── diagnostic-2026-06-24_14-05-21.log
 ├── recovery-2026-06-27_08-11-43.log
 └── snapshot-2026-07-02_22-30-15.log
+...
 
 ## Each report from the log files includes:
 
-Interface state
+. Interface state
 
-IP addresses
+. IP addresses
 
-Routing tables
+. Routing tables
 
-DNS configuration
+. DNS configuration
 
-Gateway tests
+. Gateway tests
 
-NetworkManager state
+. NetworkManager state
 
-Resolver state
+. Resolver state
 
-Bridge status
+. Bridge status
 
-KVM network information
+. KVM network information
 
-Recent NetworkManager logs (journalctl)
+. Recent NetworkManager logs (journalctl)
 
 # System Requirements
 
-Requirement	Details: 
+## Requirement	Details: 
 Distribution	Any modern Linux distribution (Debian/Ubuntu, RHEL/CentOS/Fedora, Arch Linux, MX Linux, etc.)
 Init System	systemd
 Network Management	NetworkManager (primary) with optional support for systemd-resolved
 Virtualisation (optional)	libvirt and bridge-utils for virtualisation‑related diagnostics
 Dependencies	bash, iproute2, curl, nmcli, resolvectl, ping, grep, awk, zenity (for GUI), policykit-1 (for polkit)
 License
-This project is licensed under the MIT License – see the LICENSE file for details.
 
-Contributing
+## This project is licensed under the MIT License – see the LICENSE file for details.
+
+Contributing:
 Contributions are welcome! Please feel free to submit a Pull Request or open an Issue to discuss improvements, new features, or bug reports.
 
 Fork the Project
@@ -390,7 +395,8 @@ Push to the Branch (git push origin feature/AmazingFeature)
 Open a Pull Request
 
 # 📋 Release Notes (v1.1.0): 
-🎯 Major Features:
+
+## 🎯 Major Features:
 ✅ 11 OSI layers of network diagnostics
 
 ✅ 8 repair stages with intelligent targeting
