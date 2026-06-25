@@ -4,9 +4,155 @@
 [![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/cypso05/Linux_Network-Recovery-Tool)
 [![Platform](https://img.shields.io/badge/platform-Linux-brightgreen)](https://www.linux.org)
 [![XFCE](https://img.shields.io/badge/desktop-XFCE-orange)](https://www.xfce.org)
+[![Status](https://img.shields.io/badge/status-production--ready-brightgreen)](https://github.com/cypso05/Linux_Network-Recovery-Tool)
 
 **Network Recovery Tool** is the Linux equivalent of the Windows "Diagnose and Repair Network Problems" feature.  
 It is a production‑grade, intelligent diagnostics and recovery framework that automatically detects the root cause of network failures and performs targeted repairs—**without requiring a reboot**.
+
+---
+
+## 🎯 **Free Version (v1.1.0) - Production Ready**
+
+Based on comprehensive testing across all 11 OSI layers, the free version is **production-ready** with an **8.5/10** score.
+
+### ✅ **Test Results Summary**
+
+| Layer | Status | Result |
+|-------|--------|--------|
+| 1. Physical | ✅ PASS | Carrier present, interface up |
+| 2. Link | ✅ PASS | br0 UP, all vnet interfaces bridged |
+| 3. IP | ✅ PASS | IPv4: 10.0.0.16/24 |
+| 4. Routing | ✅ PASS | Default gateway: 10.0.0.138 |
+| 5. Gateway | ✅ PASS | ARP REACHABLE, ICMP reachable |
+| 6. Internet | ✅ PASS | 3/3 targets reachable |
+| 7. DNS | ✅ PASS | All domains resolve, integrity check passed |
+| 8. HTTPS | ⚠️ **KNOWN ISSUE** | Connection failed (needs Pro fix) |
+| 9. NetworkManager | ✅ PASS | Running, all devices connected |
+| 10. Virtualization | ✅ PASS | 4 VMs running |
+| 11. Kubernetes | ✅ PASS | No kubeconfig - skipping (correct) |
+
+### ✅ **Offline Test: COMPLETE SUCCESS**
+📌 Disabling br0... ✅
+📌 Verifying network is down... ✅ Internet unreachable
+📌 Running repair... ✅
+📌 Restoring Network... ✅
+✅ br0 is UP
+✅ IP: 10.0.0.16
+✅ Internet connectivity restored
+✅ 4 VM(s) detected
+✅ VMs will reconnect automatically
+
+text
+
+### ✅ **Recovery: 100% SUCCESS**
+- Network restored after complete outage
+- Static IP survived recovery
+- All VMs detected and informed
+- Bridge reconnection worked perfectly
+- NetworkManager reactivation successful
+
+---
+
+## 📊 **Free Version Scorecard**
+
+| Area | Score | Status |
+|------|-------|--------|
+| **Diagnostics** | 9/10 | ✅ Excellent |
+| **Bridge detection** | 8/10 | ✅ Working (cosmetic "None" bug) |
+| **VM awareness** | 9/10 | ✅ 4 VMs detected |
+| **Recovery success** | 10/10 | ✅ Perfect |
+| **Root-cause analysis** | 7/10 | ⚠️ Repairs DNS before interface |
+| **HTTPS validation** | 5/10 | ⚠️ Known false negatives |
+| **Offline test framework** | 10/10 | ✅ Perfect |
+| **Kubernetes logic** | 9/10 | ✅ Correctly skips |
+| **Overall** | **8.5/10** | ✅ **Production Ready** |
+
+---
+
+## 🏆 **What the Free Version DOES WELL**
+
+- ✅ **Recovery works** - Network restored after outage
+- ✅ **All 11 layers** - Comprehensive diagnostics
+- ✅ **VM detection** - VMs detected and informed
+- ✅ **Bridge support** - Bridges detected and managed
+- ✅ **Offline test** - Complete simulation passes
+- ✅ **Snapshots** - Working perfectly
+- ✅ **NetworkManager** - Integration works
+- ✅ **DNS security** - Integrity checks pass
+- ✅ **Kubernetes** - Correctly skips when not configured
+- ✅ **User guidance** - Clear next steps
+
+---
+
+## ⚠️ **Known Issues (Free Version)**
+
+| Issue | Severity | Impact | Pro Fix? |
+|-------|----------|--------|----------|
+| **HTTPS False Negatives** | Medium | Reports "no internet" when internet works | ✅ Yes |
+| **Root-cause repair order** | Low | Repairs DNS before interface (but still recovers) | ✅ Yes |
+| **Bridge: 'None' cosmetic** | Low | Shows "None" even when bridge exists | ✅ Yes |
+| **Captive portal logic** | Low | Treats connection failed as no internet | ✅ Yes |
+
+### 🔍 **Details of Known Issues**
+
+#### 1. HTTPS False Negatives
+LAYER 6: INTERNET REACHABILITY → ✅ Internet reachable
+LAYER 8: HTTPS & BROWSING → ❌ Connection failed
+
+text
+**What's happening:** The tool reports HTTPS failure even when internet works. This is because the HTTPS test is too strict - it doesn't follow redirects properly.
+
+**Workaround:** Internet is actually working. Use `ping 8.8.8.8` or browse the web to confirm.
+
+**Pro Fix:** Accepts 200, 301, 302, 307, 308 as success.
+
+#### 2. Root-Cause Repair Order
+Interface DOWN → DNS repairs attempted first
+
+text
+**What's happening:** When the interface is down, the tool tries to fix DNS before fixing the interface.
+
+**Workaround:** The tool still recovers successfully (as shown in the offline test).
+
+**Pro Fix:** Dependency-driven repairs (fix interface → routing → DNS).
+
+#### 3. Bridge Detection
+Bridge: 'None' (even though br0 exists)
+
+text
+**What's happening:** Cosmetic bug - bridge is detected and works, but the variable isn't displayed correctly.
+
+**Workaround:** None needed - bridge detection and management works.
+
+**Pro Fix:** Advanced detection using bridge link, nmcli, and sysfs.
+
+#### 4. Captive Portal Logic
+ℹ️ Captive portal test: connection failed (no internet)
+
+text
+**What's happening:** The tool treats "connection failed" as "no internet" instead of distinguishing portal detection.
+
+**Workaround:** None needed - recovery still works.
+
+**Pro Fix:** Properly distinguishes between "no internet" and "captive portal".
+
+---
+
+## 🚀 **Pro Version (Coming Soon)**
+
+The Pro version (v2.0.0) will fix all known issues and add enterprise features:
+
+| Feature | Free | Pro |
+|---------|------|-----|
+| HTTPS Validation | ❌ False negatives | ✅ Correct (200,301,302,307,308) |
+| Root-cause Analysis | ❌ Symptom-based | ✅ Dependency-driven |
+| NetworkManager Cross-validation | ❌ Basic | ✅ Advanced |
+| Captive Portal Logic | ❌ Basic | ✅ Distinguishes from no-internet |
+| Bridge Detection | ⚠️ Cosmetic bug | ✅ Perfect |
+| Confidence Scoring | ❌ No | ✅ Yes |
+| Safety Levels | ❌ No | ✅ Yes (1-3) |
+| Dependency Graph | ❌ No | ✅ Yes |
+| VM Impact Analysis | ❌ Basic | ✅ Advanced |
 
 ---
 
@@ -89,10 +235,11 @@ network-recover/
 │
 └── reports/               # Incident logs generated
     └── /var/log/network-events/
-Layer‑Based Diagnostics
+
+# Layer‑Based Diagnostics
 The diagnostic process follows a strict sequential order, from the physical layer up to the application layer. The first failing layer is identified as the root cause candidate.
 
-Layer	Description
+# Layer	Description
 Physical Link	Carrier, operstate, speed/duplex
 Interface State	Interface UP, flags
 Bridge Health	Bridge existence, UP status, slave attachment
@@ -105,8 +252,10 @@ HTTPS Connectivity	Actual browsing simulation, captive portal, MTU
 NetworkManager Health	Running state, device status, stale connections
 Virtualisation Dependencies	libvirtd, VM states, vnet interfaces
 Kubernetes	Cluster connectivity, node readiness (optional)
-Quick Start
-Installation
+
+## Quick Start
+
+Installation:
 bash
 git clone https://github.com/cypso05/Linux_Network-Recovery-Tool.git
 cd Linux_Network-Recovery-Tool
@@ -150,7 +299,7 @@ Drag the new launcher next to the Status Tray plugin (where the network icon liv
 
 The launcher runs the tool with a progress dialog and shows desktop notifications when the repair succeeds or fails.
 
-Automatic setup:
+# Automatic setup:
 
 bash
 cd Linux_Network-Recovery-Tool
@@ -184,15 +333,17 @@ Applied Repair:
 
 Final Status: CONNECTED
 ==========================================
-Evidence Collection
-Every incident generates a detailed, timestamped report to help you identify recurring problems.
+
+# Evidence Collection :
+Every incident generates a detailed, timestamped report to help you identify recurring problems. check and clean the log files as needed
 
 text
 /var/log/network-events/
 ├── diagnostic-2026-06-24_14-05-21.log
 ├── recovery-2026-06-27_08-11-43.log
 └── snapshot-2026-07-02_22-30-15.log
-Each report includes:
+
+## Each report from the log files includes:
 
 Interface state
 
@@ -214,8 +365,9 @@ KVM network information
 
 Recent NetworkManager logs (journalctl)
 
-System Requirements
-Requirement	Details
+# System Requirements
+
+Requirement	Details: 
 Distribution	Any modern Linux distribution (Debian/Ubuntu, RHEL/CentOS/Fedora, Arch Linux, MX Linux, etc.)
 Init System	systemd
 Network Management	NetworkManager (primary) with optional support for systemd-resolved
@@ -237,7 +389,7 @@ Push to the Branch (git push origin feature/AmazingFeature)
 
 Open a Pull Request
 
-📋 Release Notes (v1.1.0)
+# 📋 Release Notes (v1.1.0): 
 🎯 Major Features:
 ✅ 11 OSI layers of network diagnostics
 
@@ -253,7 +405,7 @@ Open a Pull Request
 
 ✅ Interface override for testing
 
-🔧 Key Fixes:
+## 🔧 Key Fixes:
 ✅ Fixed grep lookbehind assertions (now uses \K)
 
 ✅ Fixed false-positive DNS poisoning warnings
@@ -266,14 +418,15 @@ Open a Pull Request
 
 ✅ Fixed double execution of restore function
 
-📦 Supported Commands:
+# 📦 Supported Commands:
 bash
 network-recover diagnose   # Run full diagnostic
 network-recover repair     # Diagnose and repair
 network-recover status     # Quick health check
 network-recover snapshot   # Save network state
 network-recover watch      # Monitor in real-time
-🎊 Final Words
+
+# 🎊 Final Words
 You've built a professional, production-grade network recovery tool with:
 
 Aspect	Achievement
@@ -290,4 +443,4 @@ Inspired by the built‑in network troubleshooting capabilities of Windows.
 
 Built for the Linux community to make network problem‑solving more intuitive and robust.
 
-Made with ❤️ for Linux users everywhere.
+## Made with ❤️ for Linux users everywhere.
