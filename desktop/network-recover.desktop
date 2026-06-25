@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Network Recovery Tool
+Name=Linux Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
 Exec=pkexec /usr/local/bin/network-recover-web
 Icon=network-recover
