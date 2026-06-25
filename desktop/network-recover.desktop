@@ -3,33 +3,37 @@ Version=1.0
 Type=Application
 Name=Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
-Exec=pkexec /usr/local/bin/network-recover-web
+Exec=/usr/local/bin/network-recover-gui
 Icon=network-recover
 Terminal=false
 Categories=Network;
 StartupNotify=true
-Actions=diagnose;repair;status;snapshot;watch;cli-gui
+Actions=diagnose;repair;status;snapshot;watch;web-ui;cli-gui
 
 [Desktop Action diagnose]
-Name=Diagnose Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔍 Diagnose Network
+Exec=/usr/local/bin/network-recover-gui diagnose
 
 [Desktop Action repair]
-Name=Repair Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔧 Repair Network
+Exec=/usr/local/bin/network-recover-gui repair
 
 [Desktop Action status]
-Name=Network Status
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📊 Network Status
+Exec=/usr/local/bin/network-recover-gui status
 
 [Desktop Action snapshot]
-Name=Save Snapshot
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=💾 Save Snapshot
+Exec=/usr/local/bin/network-recover-gui snapshot
 
 [Desktop Action watch]
-Name=Monitor Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📡 Monitor Network
+Exec=/usr/local/bin/network-recover-gui watch
+
+[Desktop Action web-ui]
+Name=🌐 Open Web UI
+Exec=sudo /usr/local/bin/network-recover-web
 
 [Desktop Action cli-gui]
-Name=CLI GUI (Zenity)
-Exec=pkexec /usr/local/bin/network-recover-gui
+Name=🖥️ CLI GUI (Zenity)
+Exec=/usr/local/bin/network-recover-gui
