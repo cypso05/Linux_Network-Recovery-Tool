@@ -1,12 +1,13 @@
 ﻿# Network Recovery Tool Makefile
-# Version: 1.1.0
+# Version: 1.1.1
 
-VERSION = 1.1.0
+VERSION = 1.1.1
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib/network-recover
 DESKTOPDIR = $(PREFIX)/share/applications
 POLKITDIR = $(PREFIX)/share/polkit-1/actions
+ICONDIR = $(PREFIX)/share/icons/hicolor
 LOGDIR = /var/log/network-events
 SNAPSHOTDIR = /var/lib/network-recover/snapshots
 
@@ -73,6 +74,21 @@ install:
 		echo "  ✅ collectors/ installed ($(shell ls -1 collectors 2>/dev/null | wc -l) modules)"; \
 	fi
 	
+	# Install icons
+	@if [ -d icons ]; then \
+		mkdir -p $(ICONDIR)/scalable/apps; \
+		mkdir -p $(ICONDIR)/48x48/apps; \
+		if [ -f icons/network-recover.svg ]; then \
+			install -m 644 icons/network-recover.svg $(ICONDIR)/scalable/apps/; \
+			echo "  ✅ SVG icon installed"; \
+		fi; \
+		if [ -f icons/network-recover.png ]; then \
+			install -m 644 icons/network-recover.png $(ICONDIR)/48x48/apps/; \
+			echo "  ✅ PNG icon installed"; \
+		fi; \
+		update-icon-caches $(ICONDIR) 2>/dev/null || true; \
+	fi
+	
 	# Install polkit policy
 	@if [ -f polkit/com.network-recover.policy ]; then \
 		install -m 644 polkit/com.network-recover.policy $(POLKITDIR)/ && \
@@ -116,6 +132,11 @@ uninstall:
 	
 	# Remove modules
 	@rm -rf $(LIBDIR) && echo "  ✅ Removed: $(LIBDIR)" || echo "  ⚠️  Not found: $(LIBDIR)"
+	
+	# Remove icons
+	@rm -f $(ICONDIR)/scalable/apps/network-recover.svg 2>/dev/null || true
+	@rm -f $(ICONDIR)/48x48/apps/network-recover.png 2>/dev/null || true
+	@echo "  ✅ Icons removed"
 	
 	# Remove logs and snapshots (ask confirmation)
 	@echo "  ⚠️  Removing logs and snapshots:"

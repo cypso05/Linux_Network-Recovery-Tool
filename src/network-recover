@@ -1,7 +1,7 @@
 #!/bin/bash
 # /usr/local/bin/network-recover
 # Production-Grade Linux Network Recovery Engine
-# Version: 1.1.0
+# Version: 1.1.1
 # License: MIT
 #
 # Usage:
@@ -19,7 +19,7 @@ set -euo pipefail
 # CONFIGURATION
 # ============================================================
 
-readonly VERSION="1.1.0"
+readonly VERSION="1.1.1"
 readonly SCRIPT_NAME="network-recover"
 
 # Directories
@@ -71,14 +71,36 @@ if [[ -n "${NETWORK_RECOVER_IFACE:-}" ]]; then
     DEFAULT_IFACE="$NETWORK_RECOVER_IFACE"
 fi
 
-# Detect if we have a bridge (fixed regex)
+# ============================================================
+# IMPROVED BRIDGE DETECTION (multi-method)
+# ============================================================
 BRIDGE_IFACE=""
-for iface in $(ip -br link show 2>/dev/null | awk '{print $1}' | grep -v lo | sed 's/@.*//'); do
-    if ip link show "$iface" 2>/dev/null | grep -q "bridge"; then
-        BRIDGE_IFACE="$iface"
-        break
-    fi
-done
+
+# Method 1: Check via bridge link (most reliable)
+if command -v bridge &>/dev/null; then
+    for iface in $(bridge link show 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | sed 's/@.*//'); do
+        if bridge link show "$iface" 2>/dev/null | grep -q "master"; then
+            BRIDGE_IFACE="$iface"
+            break
+        fi
+    done
+fi
+
+# Method 2: Check via NetworkManager (if bridge detection failed)
+if [[ -z "$BRIDGE_IFACE" ]] && command -v nmcli &>/dev/null; then
+    BRIDGE_IFACE=$(nmcli -t -f TYPE,DEVICE connection show --active 2>/dev/null | \
+        grep "^bridge:" | cut -d: -f2 | head -1)
+fi
+
+# Method 3: Check via sysfs (fallback)
+if [[ -z "$BRIDGE_IFACE" ]]; then
+    for iface in /sys/class/net/*; do
+        if [[ -d "$iface/bridge" ]]; then
+            BRIDGE_IFACE=$(basename "$iface")
+            break
+        fi
+    done
+fi
 
 # Detect virtualization
 HAS_LIBVIRT=$(command -v virsh &>/dev/null && echo "true" || echo "false")

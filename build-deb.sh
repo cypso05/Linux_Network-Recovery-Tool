@@ -1,10 +1,10 @@
 #!/bin/bash
 # build-deb.sh - Build Debian package with desktop integration
-# Version: 1.1.0
+# Version: 1.1.1 (GUI wrapper included, PNG icon added)
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 PACKAGE_NAME="network-recover"
 MAINTAINER="Network Recovery Team <support@network-recover.com>"
 DESCRIPTION="Production-Grade Linux Network Recovery Engine - Diagnose and repair network issues without reboot"
@@ -49,6 +49,15 @@ echo -e "${GREEN}✅ Directory structure created${NC}"
 cp src/network-recover "$PKG_DIR/usr/local/bin/"
 chmod 755 "$PKG_DIR/usr/local/bin/network-recover"
 
+# Copy GUI wrapper (NEW)
+if [[ -f "src/network-recover-gui" ]]; then
+    cp src/network-recover-gui "$PKG_DIR/usr/local/bin/"
+    chmod 755 "$PKG_DIR/usr/local/bin/network-recover-gui"
+    echo -e "${GREEN}✅ GUI wrapper copied${NC}"
+else
+    echo -e "${YELLOW}⚠️  src/network-recover-gui not found - skipping${NC}"
+fi
+
 # Copy modular components
 cp -r diagnostics "$PKG_DIR/usr/local/lib/network-recover/"
 cp -r repairs "$PKG_DIR/usr/local/lib/network-recover/"
@@ -61,7 +70,7 @@ chmod 755 "$PKG_DIR/usr/local/lib/network-recover/test-offline.sh"
 
 echo -e "${GREEN}✅ Files copied${NC}"
 
-# Create desktop icon (SVG)
+# Create scalable SVG icon (kept as before)
 cat > "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/network-recover.svg" << 'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <defs>
@@ -81,65 +90,37 @@ cat > "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/network-recover.svg" << 'E
 </svg>
 EOF
 
+# Create 48x48 PNG icon (NEW - base64 encoded minimal icon)
+cat > "$PKG_DIR/usr/share/icons/hicolor/48x48/apps/network-recover.png" << 'EOF'
+iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAsQAAALEBxi1JjQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAH7SURBVHic7ZqxTgJBEEXfXJHI/2/j/wgdGhqIhR0l0Qo7LU1qQ4IJ1gvJhZ7nZzazl72XJCFJhWEhF09Y+uP3+Hp/zg+zxeNzdZjaFpLUK9lw1WjrO++0/U/y2LkjBQ/4x7dcEMs9kAT7PZDWUEhChSSVhiBJpSEEJCkloQgESZqRUARiSJJKQxAkKaUhCESQpEISiiBJhSREIEiNJBQhCFK0NBIBCJKn0dIICIRpNBRBkNyNhiIIkrnRUEQgSFJ7o6GIQZCkQhKKIEjdhpYUQRCgQUuKIAiSoSVFEARJ35IiCAIkbUmKIAiQsiVFEATI1JIiCAKgbkmRhAAMrCieAABDAgCoVxRPAIAtAYBRUzwBADYEAEZN8QQAWBMA2BIAgC0BAGBLAKCQeAIArAkAFBJPALCVWMNjmNq6Uk1sO4n1KmkR81XSLGK+StpKghHwVdJWEoyAr5K2kmAEfJW0lQQj4KukrSQYAV8lbSXBCPgqaSsJRsBXSZNJMAK+SpKEMQK+SpKEMQK+SpKEMQK+SlJJGAHvqyQVhRHwqkpaFUbAqyrJKowAD1VJq8II8FAlrQojwIuStCqMAA+S1BBGwIUkNYQRcC5JDWEEfJOkhjACLknSgjACLklSQxgBpySpIYyAM5L0RBgB3yTpShgBdyRpThgBdyRpTRgBr0jShDACnkiSE0bAE0mSE0bAU0mywgg4IklHqCk18gl7atdckq4kqVpSkqQkSVL/AaCrvLgX1RlZAAAAAElFTkSuQmCC
+EOF
+
 echo -e "${GREEN}✅ Icons created${NC}"
 
-# Create desktop entry
-cat > "$PKG_DIR/usr/share/applications/network-recover.desktop" << 'EOF'
+# Copy desktop file from the desktop/ directory (instead of generating)
+if [[ -f "desktop/network-recover.desktop" ]]; then
+    cp desktop/network-recover.desktop "$PKG_DIR/usr/share/applications/"
+    chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
+    echo -e "${GREEN}✅ Desktop entry copied (points to GUI wrapper)${NC}"
+else
+    echo -e "${YELLOW}⚠️  desktop/network-recover.desktop not found - creating fallback${NC}"
+    cat > "$PKG_DIR/usr/share/applications/network-recover.desktop" << 'EOF'
 [Desktop Entry]
-Version=1.1.0
+Version=1.0
 Type=Application
 Name=Network Diagnose & Repair
-Name[fr]=Diagnostique et réparation réseau
-Name[de]=Netzwerkdiagnose und -reparatur
-Name[es]=Diagnóstico y reparación de red
 Comment=Diagnose and fix network connectivity issues
-Comment[fr]=Diagnostiquer et réparer les problèmes de connectivité réseau
-Comment[de]=Netzwerkprobleme diagnostizieren und beheben
-Comment[es]=Diagnosticar y reparar problemas de conectividad de red
-Exec=pkexec /usr/local/bin/network-recover
+Exec=pkexec /usr/local/bin/network-recover-gui
 Icon=network-recover
 Terminal=false
 Categories=System;Network;
 StartupNotify=true
 X-XFCE-Settings=Network
-Actions=diagnose;repair;status;snapshot;watch
-
-[Desktop Action diagnose]
-Name=Diagnose Network
-Name[fr]=Diagnostiquer le réseau
-Exec=pkexec /usr/local/bin/network-recover diagnose
-Icon=network-recover
-
-[Desktop Action repair]
-Name=Repair Network
-Name[fr]=Réparer le réseau
-Exec=pkexec /usr/local/bin/network-recover repair
-Icon=network-recover
-
-[Desktop Action status]
-Name=Network Status
-Name[fr]=État du réseau
-Exec=pkexec /usr/local/bin/network-recover status
-Icon=network-recover
-
-[Desktop Action snapshot]
-Name=Save Snapshot
-Name[fr]=Sauvegarder l'état
-Exec=pkexec /usr/local/bin/network-recover snapshot
-Icon=network-recover
-
-[Desktop Action watch]
-Name=Monitor Network
-Name[fr]=Surveiller le réseau
-Exec=pkexec /usr/local/bin/network-recover watch
-Icon=network-recover
 EOF
+    chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
+fi
 
-chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
-
-echo -e "${GREEN}✅ Desktop entry created${NC}"
-
-# Create polkit policy
+# Create polkit policy (unchanged)
 cat > "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC
@@ -165,7 +146,7 @@ chmod 644 "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy"
 
 echo -e "${GREEN}✅ Polkit policy created${NC}"
 
-# Create DEBIAN control file
+# Create DEBIAN control file (unchanged)
 cat > "$PKG_DIR/DEBIAN/control" << EOF
 Package: $PACKAGE_NAME
 Version: $VERSION
@@ -197,7 +178,7 @@ EOF
 
 chmod 644 "$PKG_DIR/DEBIAN/control"
 
-# Create post-install script
+# Create post-install script (unchanged)
 cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 set -e
@@ -228,7 +209,7 @@ EOF
 
 chmod 755 "$PKG_DIR/DEBIAN/postinst"
 
-# Create post-removal script
+# Create post-removal script (unchanged)
 cat > "$PKG_DIR/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
 set -e
@@ -248,9 +229,9 @@ chmod 755 "$PKG_DIR/DEBIAN/postrm"
 
 echo -e "${GREEN}✅ DEBIAN control files created${NC}"
 
-# Create documentation
+# Create documentation (unchanged)
 cat > "$PKG_DIR/usr/share/doc/$PACKAGE_NAME/README" << 'EOF'
-Network Recovery Tool v1.1.0
+Network Recovery Tool v1.1.1
 
 Quick Start:
   sudo network-recover status     - Check network health

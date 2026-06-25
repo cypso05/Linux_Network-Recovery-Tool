@@ -1,13 +1,13 @@
 #!/bin/bash
 #===============================================================================
 # Network Recovery Tool - Installer
-# Version: 1.1.0
-# Installs the tool, GUI wrapper, modular components, XFCE integration, and polkit rules
+# Version: 1.1.1
+# Installs the tool, GUI wrapper, modular components, XFCE integration, icons, and polkit rules
 #===============================================================================
 
 set -euo pipefail
 
-readonly VERSION="1.1.0"
+readonly VERSION="1.1.1"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BIN_DIR="/usr/local/bin"
 readonly LIB_DIR="/usr/local/lib/network-recover"
@@ -90,6 +90,11 @@ if [[ "$UNINSTALL" == "true" ]]; then
     
     echo "📌 Removing modules..."
     rm -rf "$LIB_DIR" && echo "  ✅ Removed: $LIB_DIR" || echo "  ⚠️  Not found"
+    
+    echo "📌 Removing icons..."
+    rm -f "/usr/share/icons/hicolor/scalable/apps/network-recover.svg" 2>/dev/null || true
+    rm -f "/usr/share/icons/hicolor/48x48/apps/network-recover.png" 2>/dev/null || true
+    echo "  ✅ Icons removed"
     
     echo "📌 Removing logs and snapshots..."
     rm -rf "$LOG_DIR" && echo "  ✅ Removed: $LOG_DIR" || echo "  ⚠️  Not found"
@@ -271,6 +276,37 @@ else
     echo -e "${YELLOW}⚠️  No modular components found - core engine is self-contained${NC}"
 fi
 
+# Step 5.5: Install icons
+echo ""
+echo "🎨 Installing icons..."
+
+ICON_SOURCE="$SCRIPT_DIR/icons"
+ICON_DEST="/usr/share/icons/hicolor"
+
+if [[ -d "$ICON_SOURCE" ]]; then
+    # Install scalable icon
+    if [[ -f "$ICON_SOURCE/network-recover.svg" ]]; then
+        mkdir -p "$ICON_DEST/scalable/apps"
+        cp "$ICON_SOURCE/network-recover.svg" "$ICON_DEST/scalable/apps/"
+        echo "  ✅ SVG icon installed"
+    fi
+    
+    # Install 48x48 icon
+    if [[ -f "$ICON_SOURCE/network-recover.png" ]]; then
+        mkdir -p "$ICON_DEST/48x48/apps"
+        cp "$ICON_SOURCE/network-recover.png" "$ICON_DEST/48x48/apps/"
+        echo "  ✅ PNG icon installed"
+    fi
+    
+    # Update icon cache
+    if command -v update-icon-caches &>/dev/null; then
+        update-icon-caches /usr/share/icons/hicolor/
+        echo "  ✅ Icon cache updated"
+    fi
+else
+    echo "  ⚠️  icons/ folder not found - using system icons"
+fi
+
 # Step 6: Install desktop entry
 echo ""
 echo "📱 Installing desktop entry..."
@@ -287,7 +323,7 @@ Type=Application
 Name=Network Diagnose & Repair
 Comment=Diagnose and fix network connectivity issues
 Exec=pkexec /usr/local/bin/network-recover-gui
-Icon=network-wireless
+Icon=network-recover
 Terminal=false
 Categories=System;Network;
 StartupNotify=true
@@ -308,7 +344,7 @@ cat > "$POLKIT_DIR/com.network-recover.policy" << 'EOF'
   <action id="com.network-recover.diagnose">
     <description>Run network diagnostics and repair</description>
     <message>Authentication is required to diagnose and repair network connectivity</message>
-    <icon_name>network-wireless</icon_name>
+    <icon_name>network-recover</icon_name>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
@@ -320,7 +356,7 @@ cat > "$POLKIT_DIR/com.network-recover.policy" << 'EOF'
   <action id="com.network-recover.gui">
     <description>Run network diagnostics and repair (GUI)</description>
     <message>Authentication is required to diagnose and repair network connectivity</message>
-    <icon_name>network-wireless</icon_name>
+    <icon_name>network-recover</icon_name>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
@@ -431,6 +467,19 @@ if [[ -f "$POLKIT_DIR/com.network-recover.policy" ]]; then
 else
     echo -e "  ❌ Polkit policy: MISSING"
     VERIFY_OK=false
+fi
+
+# Icons
+if [[ -f "/usr/share/icons/hicolor/scalable/apps/network-recover.svg" ]]; then
+    echo -e "  ✅ SVG icon: installed"
+else
+    echo -e "  ⚠️  SVG icon: missing (optional)"
+fi
+
+if [[ -f "/usr/share/icons/hicolor/48x48/apps/network-recover.png" ]]; then
+    echo -e "  ✅ PNG icon: installed"
+else
+    echo -e "  ⚠️  PNG icon: missing (optional)"
 fi
 
 # Log directories
