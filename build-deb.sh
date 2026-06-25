@@ -127,52 +127,51 @@ EOF
 
 echo -e "${GREEN}✅ Icons created${NC}"
 
-# Copy desktop file from the desktop/ directory
-if [[ -f "desktop/network-recover.desktop" ]]; then
-    cp desktop/network-recover.desktop "$PKG_DIR/usr/share/applications/"
-    chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
-    echo -e "${GREEN}✅ Desktop entry copied${NC}"
-else
-    echo -e "${YELLOW}⚠️  desktop/network-recover.desktop not found - creating fallback${NC}"
-    cat > "$PKG_DIR/usr/share/applications/network-recover.desktop" << 'EOF'
+# Copy desktop file - all actions open the GUI with the appropriate argument
+cat > "$PKG_DIR/usr/share/applications/network-recover.desktop" << 'EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
-Exec=pkexec /usr/local/bin/network-recover-web
+Exec=/usr/local/bin/network-recover-gui
 Icon=network-recover
 Terminal=false
 Categories=Network;
 StartupNotify=true
-Actions=diagnose;repair;status;snapshot;watch;cli-gui
+Actions=diagnose;repair;status;snapshot;watch;web-ui;cli-gui
 
 [Desktop Action diagnose]
-Name=Diagnose Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔍 Diagnose Network
+Exec=/usr/local/bin/network-recover-gui diagnose
 
 [Desktop Action repair]
-Name=Repair Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔧 Repair Network
+Exec=/usr/local/bin/network-recover-gui repair
 
 [Desktop Action status]
-Name=Network Status
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📊 Network Status
+Exec=/usr/local/bin/network-recover-gui status
 
 [Desktop Action snapshot]
-Name=Save Snapshot
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=💾 Save Snapshot
+Exec=/usr/local/bin/network-recover-gui snapshot
 
 [Desktop Action watch]
-Name=Monitor Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📡 Monitor Network
+Exec=/usr/local/bin/network-recover-gui watch
+
+[Desktop Action web-ui]
+Name=🌐 Open Web UI
+Exec=/usr/local/bin/network-recover-web
 
 [Desktop Action cli-gui]
-Name=CLI GUI (Zenity)
-Exec=pkexec /usr/local/bin/network-recover-gui
+Name=🖥️ CLI GUI (Zenity)
+Exec=/usr/local/bin/network-recover-gui
 EOF
-    chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
-fi
+
+chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
+echo -e "${GREEN}✅ Desktop entry copied${NC}"
 
 # Create polkit policy
 cat > "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy" << 'EOF'
@@ -284,13 +283,19 @@ echo "    sudo network-recover diagnose"
 echo "    sudo network-recover repair"
 echo ""
 echo "  Web Interface:"
-echo "    pkexec /usr/local/bin/network-recover-web"
+echo "    /usr/local/bin/network-recover-web"
 echo "    http://localhost:9876"
 echo ""
 echo "  GUI (Zenity):"
-echo "    pkexec /usr/local/bin/network-recover-gui"
+echo "    /usr/local/bin/network-recover-gui"
 echo ""
-echo "  Panel icon added next to network icon"
+echo "  Right-click the launcher for quick actions:"
+echo "    🔍 Diagnose Network"
+echo "    🔧 Repair Network"
+echo "    📊 Network Status"
+echo "    💾 Save Snapshot"
+echo "    📡 Monitor Network"
+echo "    🌐 Open Web UI"
 echo "=============================================="
 EOF
 
@@ -326,11 +331,19 @@ Quick Start (CLI):
   sudo network-recover repair     - Diagnose and repair
 
 Quick Start (Web UI):
-  pkexec /usr/local/bin/network-recover-web
+  /usr/local/bin/network-recover-web
   Then open http://localhost:9876
 
 Quick Start (Zenity GUI):
-  pkexec /usr/local/bin/network-recover-gui
+  /usr/local/bin/network-recover-gui
+
+Right-click the launcher in your start menu for quick actions:
+  🔍 Diagnose Network  - Opens GUI directly to diagnose
+  🔧 Repair Network    - Opens GUI directly to repair
+  📊 Network Status    - Opens GUI directly to status
+  💾 Save Snapshot     - Opens GUI directly to snapshot
+  📡 Monitor Network   - Opens GUI directly to monitor
+  🌐 Open Web UI       - Opens the web interface
 
 Documentation:
   Full documentation at: https://github.com/cypso05/Linux_Network-Recovery-Tool
@@ -359,8 +372,9 @@ echo "  sudo dpkg -i ${PACKAGE_NAME}_${VERSION}_all.deb"
 echo ""
 echo "📌 Usage after installation:"
 echo "  CLI:       sudo network-recover diagnose"
-echo "  Web UI:    pkexec /usr/local/bin/network-recover-web"
-echo "  Zenity GUI: pkexec /usr/local/bin/network-recover-gui"
+echo "  Web UI:    /usr/local/bin/network-recover-web"
+echo "  Zenity GUI: /usr/local/bin/network-recover-gui"
+echo "  Right-click launcher for quick actions"
 echo ""
 echo "📌 Upload to GitHub Releases:"
 echo "  https://github.com/cypso05/Linux_Network-Recovery-Tool/releases"
