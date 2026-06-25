@@ -1,5 +1,5 @@
 #!/bin/bash
-# build-deb.sh - Build Debian package with full desktop integration
+# build-deb.sh - Build Debian package with desktop integration
 # Version: 1.1.0
 
 set -euo pipefail
@@ -80,16 +80,6 @@ cat > "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/network-recover.svg" << 'E
   <path d="M36 32 L36 40 M32 36 L40 36" stroke="#FFC107" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 2"/>
 </svg>
 EOF
-
-# Create 48x48 PNG icon
-convert -size 48x48 xc:transparent \
-  -fill "#2196F3" -draw "circle 24,24 24,4" \
-  -fill "white" -draw "line 24,28 24,32" \
-  -fill "white" -draw "line 24,16 24,20" \
-  -fill "white" -draw "line 16,24 20,24" \
-  -fill "white" -draw "line 28,24 32,24" \
-  -fill "white" -draw "circle 24,24 1,1" \
-  "$PKG_DIR/usr/share/icons/hicolor/48x48/apps/network-recover.png" 2>/dev/null || true
 
 echo -e "${GREEN}✅ Icons created${NC}"
 
@@ -278,7 +268,7 @@ echo ""
 echo -e "${BLUE}📦 Building .deb package...${NC}"
 cd "$BUILD_DIR"
 dpkg-deb --build "$PACKAGE_NAME-$VERSION" 2>/dev/null
-mv "$PACKAGE_NAME-$VERSION.deb" "../$PACKAGE_NAME_${VERSION}_all.deb"
+mv "$PACKAGE_NAME-$VERSION.deb" "../${PACKAGE_NAME}_${VERSION}_all.deb"
 cd ..
 
 echo ""
@@ -286,11 +276,11 @@ echo "=============================================="
 echo -e "${GREEN}  ✅ PACKAGE BUILT SUCCESSFULLY!${NC}"
 echo "=============================================="
 echo ""
-echo "📦 Package: $PACKAGE_NAME_${VERSION}_all.deb"
-echo "📏 Size: $(du -h $PACKAGE_NAME_${VERSION}_all.deb 2>/dev/null | awk '{print $1}')"
+echo "📦 Package: ${PACKAGE_NAME}_${VERSION}_all.deb"
+echo "📏 Size: $(du -h ${PACKAGE_NAME}_${VERSION}_all.deb 2>/dev/null | awk '{print $1}')"
 echo ""
 echo "📌 Install it:"
-echo "  sudo dpkg -i $PACKAGE_NAME_${VERSION}_all.deb"
+echo "  sudo dpkg -i ${PACKAGE_NAME}_${VERSION}_all.deb"
 echo ""
 echo "📌 Upload to GitHub Releases:"
 echo "  https://github.com/cypso05/Linux_Network-Recovery-Tool/releases"
