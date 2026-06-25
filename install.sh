@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-readonly VERSION="1.1.1"
+readonly APP_VERSION="1.1.1"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BIN_DIR="/usr/local/bin"
 readonly LIB_DIR="/usr/local/lib/network-recover"
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "Network Recovery Tool Installer v$VERSION"
+            echo "Network Recovery Tool Installer v$APP_VERSION"
             echo ""
             echo "Usage: sudo ./install.sh [OPTIONS]"
             echo ""
@@ -75,7 +75,7 @@ done
 if [[ "$UNINSTALL" == "true" ]]; then
     echo ""
     echo "=============================================="
-    echo " Network Recovery Tool v$VERSION - Uninstaller"
+    echo " Network Recovery Tool v$APP_VERSION - Uninstaller"
     echo "=============================================="
     echo ""
     
@@ -115,7 +115,7 @@ fi
 
 echo ""
 echo "=============================================="
-echo " Network Recovery Tool v$VERSION - Installer"
+echo " Network Recovery Tool v$APP_VERSION - Installer"
 echo "=============================================="
 echo ""
 
@@ -346,6 +346,17 @@ else
     echo -e "${YELLOW}⚠️  Skipping web application installation (--no-gui)${NC}"
 fi
 
+# Step 5.7: Remove BOM from installed scripts (fix for Linux build issue)
+echo ""
+echo "🔧 Removing BOM from scripts..."
+for file in "$BIN_DIR/network-recover" "$BIN_DIR/network-recover-gui" "$BIN_DIR/network-recover-web"; do
+    if [[ -f "$file" ]]; then
+        sudo sed -i '1s/^\xEF\xBB\xBF//' "$file" 2>/dev/null
+        echo "  ✅ Cleaned: $(basename "$file")"
+    fi
+done
+echo -e "${GREEN}✅ BOM cleanup complete${NC}"
+
 # Step 6: Install desktop entry
 echo ""
 echo "📱 Installing desktop entry..."
@@ -361,36 +372,40 @@ Version=1.0
 Type=Application
 Name=Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
-Exec=pkexec /usr/local/bin/network-recover-web
+Exec=/usr/local/bin/network-recover-gui
 Icon=network-recover
 Terminal=false
 Categories=Network;
 StartupNotify=true
-Actions=diagnose;repair;status;snapshot;watch;cli-gui
+Actions=diagnose;repair;status;snapshot;watch;web-ui;cli-gui
 
 [Desktop Action diagnose]
-Name=Diagnose Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔍 Diagnose Network
+Exec=/usr/local/bin/network-recover-gui diagnose
 
 [Desktop Action repair]
-Name=Repair Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=🔧 Repair Network
+Exec=/usr/local/bin/network-recover-gui repair
 
 [Desktop Action status]
-Name=Network Status
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📊 Network Status
+Exec=/usr/local/bin/network-recover-gui status
 
 [Desktop Action snapshot]
-Name=Save Snapshot
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=💾 Save Snapshot
+Exec=/usr/local/bin/network-recover-gui snapshot
 
 [Desktop Action watch]
-Name=Monitor Network
-Exec=pkexec /usr/local/bin/network-recover-web
+Name=📡 Monitor Network
+Exec=/usr/local/bin/network-recover-gui watch
+
+[Desktop Action web-ui]
+Name=🌐 Open Web UI
+Exec=/usr/local/bin/network-recover-web
 
 [Desktop Action cli-gui]
-Name=CLI GUI (Zenity)
-Exec=pkexec /usr/local/bin/network-recover-gui
+Name=🖥️ CLI GUI (Zenity)
+Exec=/usr/local/bin/network-recover-gui
 EOF
     chmod 644 "$APP_DIR/network-recover.desktop"
     echo -e "${GREEN}✅ Desktop entry created${NC}"
@@ -596,7 +611,7 @@ if [[ "$VERIFY_OK" == "true" ]]; then
     echo "    sudo network-recover watch"
     echo ""
     echo "  Web Interface:"
-    echo "    pkexec /usr/local/bin/network-recover-web"
+    echo "    /usr/local/bin/network-recover-web"
     echo "    Or use the desktop launcher"
     echo ""
     echo "  To add the panel launcher:"
@@ -604,8 +619,8 @@ if [[ "$VERIFY_OK" == "true" ]]; then
     echo "    Look for 'Network Recovery Tool'"
     echo ""
     echo "  Or run from terminal:"
-    echo "    pkexec /usr/local/bin/network-recover-gui  (Zenity)"
-    echo "    pkexec /usr/local/bin/network-recover-web  (Web UI)"
+    echo "    /usr/local/bin/network-recover-gui  (Zenity)"
+    echo "    /usr/local/bin/network-recover-web  (Web UI)"
     echo ""
 else
     echo "=============================================="
