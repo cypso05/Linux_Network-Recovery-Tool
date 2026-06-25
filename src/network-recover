@@ -102,6 +102,11 @@ if [[ -z "$BRIDGE_IFACE" ]]; then
     done
 fi
 
+# If still empty, use DEFAULT_IFACE (fallback)
+if [[ -z "$BRIDGE_IFACE" ]]; then
+    BRIDGE_IFACE="$DEFAULT_IFACE"
+fi
+
 # Detect virtualization
 HAS_LIBVIRT=$(command -v virsh &>/dev/null && echo "true" || echo "false")
 HAS_KUBECTL=$(command -v kubectl &>/dev/null && echo "true" || echo "false")
@@ -1063,9 +1068,16 @@ cmd_status() {
     echo "Host: $(hostname)"
     echo "------------------------------------------"
     echo "Interface: $DEFAULT_IFACE"
-    echo "IP: $(ip -4 addr show ${BRIDGE_IFACE:-$DEFAULT_IFACE} 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1 || echo 'None')"
+    
+    # Fix IP detection - use bridge if available, fallback to default
+    local ip_addr=$(ip -4 addr show "${BRIDGE_IFACE}" 2>/dev/null | grep -oP 'inet\s+\K[0-9.]+' | head -1)
+    if [[ -z "$ip_addr" ]]; then
+        ip_addr=$(ip -4 addr show "${DEFAULT_IFACE}" 2>/dev/null | grep -oP 'inet\s+\K[0-9.]+' | head -1 || echo "None")
+    fi
+    echo "IP: $ip_addr"
+    
     echo "Gateway: ${DEFAULT_GATEWAY:-'None'}"
-    [[ -n "$BRIDGE_IFACE" ]] && echo "Bridge: $BRIDGE_IFACE"
+    echo "Bridge: ${BRIDGE_IFACE:-None}"
     echo "------------------------------------------"
     
     if ping -c 1 -W 1 8.8.8.8 &>/dev/null; then
