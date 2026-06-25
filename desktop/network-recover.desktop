@@ -1,5 +1,5 @@
-[Desktop Entry]
-Version=1.0
+﻿[Desktop Entry]
+Version=1.1.1
 Type=Application
 Name=Network Diagnose & Repair
 Comment=Diagnose and fix network connectivity issues
@@ -9,3 +9,29 @@ Terminal=false
 Categories=System;Network;
 StartupNotify=true
 X-XFCE-Settings=Network
+Actions=diagnose;repair;status;snapshot;watch
+
+[Desktop Action diagnose]
+Name=Diagnose Network
+Exec=pkexec /usr/local/bin/network-recover-gui diagnose
+Icon=network-recover
+
+[Desktop Action repair]
+Name=Repair Network
+Exec=pkexec /usr/local/bin/network-recover-gui repair
+Icon=network-recover
+
+[Desktop Action status]
+Name=Network Status
+Exec=pkexec /usr/local/bin/network-recover-gui status
+Icon=network-recover
+
+[Desktop Action snapshot]
+Name=Save Snapshot
+Exec=pkexec /usr/local/bin/network-recover-gui snapshot
+Icon=network-recover
+
+[Desktop Action watch]
+Name=Monitor Network
+Exec=pkexec /usr/local/bin/network-recover-gui watch
+Icon=network-recover
