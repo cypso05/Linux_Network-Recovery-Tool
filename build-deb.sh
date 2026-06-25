@@ -1,6 +1,6 @@
 #!/bin/bash
 # build-deb.sh - Build Debian package with desktop integration
-# Version: 1.1.1 (GUI wrapper included, PNG icon added)
+# Version: 1.1.1 (GUI wrapper, Web UI, and PNG icon included)
 
 set -euo pipefail
 
@@ -35,6 +35,8 @@ mkdir -p "$PKG_DIR"
 mkdir -p "$PKG_DIR/DEBIAN"
 mkdir -p "$PKG_DIR/usr/local/bin"
 mkdir -p "$PKG_DIR/usr/local/lib/network-recover"
+mkdir -p "$PKG_DIR/usr/local/lib/network-recover/web"
+mkdir -p "$PKG_DIR/usr/local/lib/network-recover/web/static"
 mkdir -p "$PKG_DIR/usr/share/applications"
 mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$PKG_DIR/usr/share/icons/hicolor/48x48/apps"
@@ -49,13 +51,41 @@ echo -e "${GREEN}✅ Directory structure created${NC}"
 cp src/network-recover "$PKG_DIR/usr/local/bin/"
 chmod 755 "$PKG_DIR/usr/local/bin/network-recover"
 
-# Copy GUI wrapper (NEW)
+# Copy GUI wrapper
 if [[ -f "src/network-recover-gui" ]]; then
     cp src/network-recover-gui "$PKG_DIR/usr/local/bin/"
     chmod 755 "$PKG_DIR/usr/local/bin/network-recover-gui"
     echo -e "${GREEN}✅ GUI wrapper copied${NC}"
 else
     echo -e "${YELLOW}⚠️  src/network-recover-gui not found - skipping${NC}"
+fi
+
+# Copy web launcher
+if [[ -f "src/network-recover-web" ]]; then
+    cp src/network-recover-web "$PKG_DIR/usr/local/bin/"
+    chmod 755 "$PKG_DIR/usr/local/bin/network-recover-web"
+    echo -e "${GREEN}✅ Web launcher copied${NC}"
+else
+    echo -e "${YELLOW}⚠️  src/network-recover-web not found - skipping${NC}"
+fi
+
+# Copy web application
+if [[ -d "web" ]]; then
+    # Copy web server
+    if [[ -f "web/server.py" ]]; then
+        cp web/server.py "$PKG_DIR/usr/local/lib/network-recover/web/"
+        chmod 755 "$PKG_DIR/usr/local/lib/network-recover/web/server.py"
+        echo -e "${GREEN}✅ Web server copied${NC}"
+    fi
+    
+    # Copy static files
+    if [[ -d "web/static" ]]; then
+        cp -r web/static/* "$PKG_DIR/usr/local/lib/network-recover/web/static/"
+        chmod -R 644 "$PKG_DIR/usr/local/lib/network-recover/web/static/"
+        echo -e "${GREEN}✅ Web UI files copied${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  web/ directory not found - skipping web application${NC}"
 fi
 
 # Copy modular components
@@ -70,7 +100,7 @@ chmod 755 "$PKG_DIR/usr/local/lib/network-recover/test-offline.sh"
 
 echo -e "${GREEN}✅ Files copied${NC}"
 
-# Create scalable SVG icon (kept as before)
+# Create scalable SVG icon
 cat > "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/network-recover.svg" << 'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <defs>
@@ -90,37 +120,61 @@ cat > "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/network-recover.svg" << 'E
 </svg>
 EOF
 
-# Create 48x48 PNG icon (NEW - base64 encoded minimal icon)
+# Create 48x48 PNG icon (base64 encoded)
 cat > "$PKG_DIR/usr/share/icons/hicolor/48x48/apps/network-recover.png" << 'EOF'
 iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAsQAAALEBxi1JjQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAH7SURBVHic7ZqxTgJBEEXfXJHI/2/j/wgdGhqIhR0l0Qo7LU1qQ4IJ1gvJhZ7nZzazl72XJCFJhWEhF09Y+uP3+Hp/zg+zxeNzdZjaFpLUK9lw1WjrO++0/U/y2LkjBQ/4x7dcEMs9kAT7PZDWUEhChSSVhiBJpSEEJCkloQgESZqRUARiSJJKQxAkKaUhCESQpEISiiBJhSREIEiNJBQhCFK0NBIBCJKn0dIICIRpNBRBkNyNhiIIkrnRUEQgSFJ7o6GIQZCkQhKKIEjdhpYUQRCgQUuKIAiSoSVFEARJ35IiCAIkbUmKIAiQsiVFEATI1JIiCAKgbkmRhAAMrCieAABDAgCoVxRPAIAtAYBRUzwBADYEAEZN8QQAWBMA2BIAgC0BAGBLAKCQeAIArAkAFBJPALCVWMNjmNq6Uk1sO4n1KmkR81XSLGK+StpKghHwVdJWEoyAr5K2kmAEfJW0lQQj4KukrSQYAV8lbSXBCPgqaSsJRsBXSZNJMAK+SpKEMQK+SpKEMQK+SpKEMQK+SlJJGAHvqyQVhRHwqkpaFUbAqyrJKowAD1VJq8II8FAlrQojwIuStCqMAA+S1BBGwIUkNYQRcC5JDWEEfJOkhjACLknSgjACLklSQxgBpySpIYyAM5L0RBgB3yTpShgBdyRpThgBdyRpTRgBr0jShDACnkiSE0bAE0mSE0bAU0mywgg4IklHqCk18gl7atdckq4kqVpSkqQkSVL/AaCrvLgX1RlZAAAAAElFTkSuQmCC
 EOF
 
 echo -e "${GREEN}✅ Icons created${NC}"
 
-# Copy desktop file from the desktop/ directory (instead of generating)
+# Copy desktop file from the desktop/ directory
 if [[ -f "desktop/network-recover.desktop" ]]; then
     cp desktop/network-recover.desktop "$PKG_DIR/usr/share/applications/"
     chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
-    echo -e "${GREEN}✅ Desktop entry copied (points to GUI wrapper)${NC}"
+    echo -e "${GREEN}✅ Desktop entry copied${NC}"
 else
     echo -e "${YELLOW}⚠️  desktop/network-recover.desktop not found - creating fallback${NC}"
     cat > "$PKG_DIR/usr/share/applications/network-recover.desktop" << 'EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Network Diagnose & Repair
+Name=Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
-Exec=pkexec /usr/local/bin/network-recover-gui
+Exec=pkexec /usr/local/bin/network-recover-web
 Icon=network-recover
 Terminal=false
-Categories=System;Network;
+Categories=Network;
 StartupNotify=true
-X-XFCE-Settings=Network
+Actions=diagnose;repair;status;snapshot;watch;cli-gui
+
+[Desktop Action diagnose]
+Name=Diagnose Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action repair]
+Name=Repair Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action status]
+Name=Network Status
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action snapshot]
+Name=Save Snapshot
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action watch]
+Name=Monitor Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action cli-gui]
+Name=CLI GUI (Zenity)
+Exec=pkexec /usr/local/bin/network-recover-gui
 EOF
     chmod 644 "$PKG_DIR/usr/share/applications/network-recover.desktop"
 fi
 
-# Create polkit policy (unchanged)
+# Create polkit policy
 cat > "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC
@@ -139,6 +193,30 @@ cat > "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy" << 'EOF'
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/network-recover</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
+  <action id="com.network-recover.gui">
+    <description>Run network diagnostics and repair (GUI)</description>
+    <message>Authentication is required to diagnose and repair network connectivity</message>
+    <icon_name>network-recover</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/network-recover-gui</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+  <action id="com.network-recover.web">
+    <description>Run network diagnostics and repair (Web UI)</description>
+    <message>Authentication is required to diagnose and repair network connectivity</message>
+    <icon_name>network-recover</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/network-recover-web</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
 </policyconfig>
 EOF
 
@@ -146,7 +224,7 @@ chmod 644 "$PKG_DIR/usr/share/polkit-1/actions/com.network-recover.policy"
 
 echo -e "${GREEN}✅ Polkit policy created${NC}"
 
-# Create DEBIAN control file (unchanged)
+# Create DEBIAN control file
 cat > "$PKG_DIR/DEBIAN/control" << EOF
 Package: $PACKAGE_NAME
 Version: $VERSION
@@ -154,8 +232,8 @@ Section: admin
 Priority: optional
 Architecture: all
 Maintainer: $MAINTAINER
-Depends: bash (>= 4.0), iproute2, curl, network-manager, dnsutils, policykit-1
-Recommends: network-manager, libvirt-clients, kubectl
+Depends: bash (>= 4.0), iproute2, curl, network-manager, dnsutils, policykit-1, python3
+Recommends: network-manager, libvirt-clients, kubectl, xdg-utils
 Description: $DESCRIPTION
  .
  Network Recovery Tool is the Linux equivalent of the Windows
@@ -173,12 +251,14 @@ Description: $DESCRIPTION
   - Virtualization (KVM/Libvirt)
   - Kubernetes (optional)
  .
+ Web Interface: http://localhost:9876
+ .
  No reboot required.
 EOF
 
 chmod 644 "$PKG_DIR/DEBIAN/control"
 
-# Create post-install script (unchanged)
+# Create post-install script
 cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 set -e
@@ -203,13 +283,20 @@ echo "    sudo network-recover status"
 echo "    sudo network-recover diagnose"
 echo "    sudo network-recover repair"
 echo ""
+echo "  Web Interface:"
+echo "    pkexec /usr/local/bin/network-recover-web"
+echo "    http://localhost:9876"
+echo ""
+echo "  GUI (Zenity):"
+echo "    pkexec /usr/local/bin/network-recover-gui"
+echo ""
 echo "  Panel icon added next to network icon"
 echo "=============================================="
 EOF
 
 chmod 755 "$PKG_DIR/DEBIAN/postinst"
 
-# Create post-removal script (unchanged)
+# Create post-removal script
 cat > "$PKG_DIR/DEBIAN/postrm" << 'EOF'
 #!/bin/bash
 set -e
@@ -229,14 +316,21 @@ chmod 755 "$PKG_DIR/DEBIAN/postrm"
 
 echo -e "${GREEN}✅ DEBIAN control files created${NC}"
 
-# Create documentation (unchanged)
+# Create documentation
 cat > "$PKG_DIR/usr/share/doc/$PACKAGE_NAME/README" << 'EOF'
 Network Recovery Tool v1.1.1
 
-Quick Start:
+Quick Start (CLI):
   sudo network-recover status     - Check network health
   sudo network-recover diagnose   - Run diagnostics
   sudo network-recover repair     - Diagnose and repair
+
+Quick Start (Web UI):
+  pkexec /usr/local/bin/network-recover-web
+  Then open http://localhost:9876
+
+Quick Start (Zenity GUI):
+  pkexec /usr/local/bin/network-recover-gui
 
 Documentation:
   Full documentation at: https://github.com/cypso05/Linux_Network-Recovery-Tool
@@ -262,6 +356,11 @@ echo "📏 Size: $(du -h ${PACKAGE_NAME}_${VERSION}_all.deb 2>/dev/null | awk '{
 echo ""
 echo "📌 Install it:"
 echo "  sudo dpkg -i ${PACKAGE_NAME}_${VERSION}_all.deb"
+echo ""
+echo "📌 Usage after installation:"
+echo "  CLI:       sudo network-recover diagnose"
+echo "  Web UI:    pkexec /usr/local/bin/network-recover-web"
+echo "  Zenity GUI: pkexec /usr/local/bin/network-recover-gui"
 echo ""
 echo "📌 Upload to GitHub Releases:"
 echo "  https://github.com/cypso05/Linux_Network-Recovery-Tool/releases"

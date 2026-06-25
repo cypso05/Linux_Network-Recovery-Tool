@@ -1,0 +1,22 @@
+#!/bin/bash
+# Launches the Network Recovery Tool web interface
+readonly PORT=9876
+readonly WEB_DIR="/usr/local/lib/network-recover/web"
+
+# Check if already running
+if pgrep -f "python3.*server.py" > /dev/null 2>&1; then
+    xdg-open "http://localhost:$PORT" 2>/dev/null || true
+    exit 0
+fi
+
+# Start server
+cd "$WEB_DIR"
+python3 server.py --port "$PORT" &
+SERVER_PID=$!
+sleep 1
+
+# Open browser
+xdg-open "http://localhost:$PORT" 2>/dev/null || true
+
+# Wait for server
+wait $SERVER_PID

@@ -2,7 +2,8 @@
 #===============================================================================
 # Network Recovery Tool - Installer
 # Version: 1.1.1
-# Installs the tool, GUI wrapper, modular components, XFCE integration, icons, and polkit rules
+# Installs the tool, GUI wrapper, web interface, modular components, 
+# XFCE integration, icons, and polkit rules
 #===============================================================================
 
 set -euo pipefail
@@ -81,6 +82,7 @@ if [[ "$UNINSTALL" == "true" ]]; then
     echo "📌 Removing binaries..."
     rm -f "$BIN_DIR/network-recover" && echo "  ✅ Removed: $BIN_DIR/network-recover" || echo "  ⚠️  Not found: $BIN_DIR/network-recover"
     rm -f "$BIN_DIR/network-recover-gui" && echo "  ✅ Removed: $BIN_DIR/network-recover-gui" || echo "  ⚠️  Not found: $BIN_DIR/network-recover-gui"
+    rm -f "$BIN_DIR/network-recover-web" && echo "  ✅ Removed: $BIN_DIR/network-recover-web" || echo "  ⚠️  Not found: $BIN_DIR/network-recover-web"
     
     echo "📌 Removing desktop entry..."
     rm -f "$APP_DIR/network-recover.desktop" && echo "  ✅ Removed: $APP_DIR/network-recover.desktop" || echo "  ⚠️  Not found"
@@ -143,7 +145,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
     
     install_deps_debian() {
         apt-get update -qq
-        local deps="curl iproute2 bridge-utils ethtool netcat-openbsd dnsutils network-manager policykit-1"
+        local deps="curl iproute2 bridge-utils ethtool netcat-openbsd dnsutils network-manager policykit-1 python3"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify-bin"
         fi
@@ -151,7 +153,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
     }
     
     install_deps_rhel() {
-        local deps="curl iproute bridge-utils ethtool nmap-ncat bind-utils NetworkManager polkit"
+        local deps="curl iproute bridge-utils ethtool nmap-ncat bind-utils NetworkManager polkit python3"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify"
         fi
@@ -159,7 +161,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
     }
     
     install_deps_arch() {
-        local deps="curl iproute2 bridge-utils ethtool openbsd-netcat bind networkmanager polkit"
+        local deps="curl iproute2 bridge-utils ethtool openbsd-netcat bind networkmanager polkit python"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify"
         fi
@@ -178,7 +180,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
             ;;
         *)
             echo -e "${YELLOW}⚠️  Unknown distribution - please install dependencies manually:${NC}"
-            echo "   core: curl, iproute2, bridge-utils, ethtool, netcat, dnsutils, network-manager, polkit"
+            echo "   core: curl, iproute2, bridge-utils, ethtool, netcat, dnsutils, network-manager, polkit, python3"
             if [[ "$NO_GUI" != "true" ]]; then
                 echo "   gui:  zenity, libnotify"
             fi
@@ -236,7 +238,6 @@ if [[ -d "$SCRIPT_DIR/diagnostics" ]]; then
     MODULES_TOTAL=$((MODULES_TOTAL + 1))
     cp -r "$SCRIPT_DIR/diagnostics" "$LIB_DIR/"
     chmod -R 755 "$LIB_DIR/diagnostics"
-    # FIXED: Removed 'local' keyword (not allowed at top level)
     diag_count=$(ls -1 "$LIB_DIR/diagnostics" 2>/dev/null | wc -l)
     echo -e "  ✅ diagnostics/ installed ($diag_count modules)"
     MODULES_INSTALLED=$((MODULES_INSTALLED + 1))
@@ -248,7 +249,6 @@ if [[ -d "$SCRIPT_DIR/repairs" ]]; then
     MODULES_TOTAL=$((MODULES_TOTAL + 1))
     cp -r "$SCRIPT_DIR/repairs" "$LIB_DIR/"
     chmod -R 755 "$LIB_DIR/repairs"
-    # FIXED: Removed 'local' keyword (not allowed at top level)
     repair_count=$(ls -1 "$LIB_DIR/repairs" 2>/dev/null | wc -l)
     echo -e "  ✅ repairs/ installed ($repair_count modules)"
     MODULES_INSTALLED=$((MODULES_INSTALLED + 1))
@@ -260,7 +260,6 @@ if [[ -d "$SCRIPT_DIR/collectors" ]]; then
     MODULES_TOTAL=$((MODULES_TOTAL + 1))
     cp -r "$SCRIPT_DIR/collectors" "$LIB_DIR/"
     chmod -R 755 "$LIB_DIR/collectors"
-    # FIXED: Removed 'local' keyword (not allowed at top level)
     coll_count=$(ls -1 "$LIB_DIR/collectors" 2>/dev/null | wc -l)
     echo -e "  ✅ collectors/ installed ($coll_count modules)"
     MODULES_INSTALLED=$((MODULES_INSTALLED + 1))
@@ -307,6 +306,46 @@ else
     echo "  ⚠️  icons/ folder not found - using system icons"
 fi
 
+# Step 5.6: Install web application
+if [[ "$NO_GUI" != "true" ]]; then
+    echo ""
+    echo "🌐 Installing web application..."
+    
+    # Create web directory
+    mkdir -p "$LIB_DIR/web"
+    mkdir -p "$LIB_DIR/web/static"
+    
+    # Copy web server
+    if [[ -f "$SCRIPT_DIR/web/server.py" ]]; then
+        cp "$SCRIPT_DIR/web/server.py" "$LIB_DIR/web/"
+        chmod 755 "$LIB_DIR/web/server.py"
+        echo "  ✅ Web server installed"
+    else
+        echo "  ⚠️  web/server.py not found - skipping"
+    fi
+    
+    # Copy static files
+    if [[ -d "$SCRIPT_DIR/web/static" ]]; then
+        cp -r "$SCRIPT_DIR/web/static"/* "$LIB_DIR/web/static/"
+        echo "  ✅ Web UI files installed"
+    else
+        echo "  ⚠️  web/static/ not found - skipping"
+    fi
+    
+    # Install web launcher
+    if [[ -f "$SCRIPT_DIR/src/network-recover-web" ]]; then
+        cp "$SCRIPT_DIR/src/network-recover-web" "$BIN_DIR/network-recover-web"
+        chmod 755 "$BIN_DIR/network-recover-web"
+        echo "  ✅ Web launcher installed to $BIN_DIR/network-recover-web"
+    else
+        echo "  ⚠️  src/network-recover-web not found - skipping"
+    fi
+    
+    echo -e "${GREEN}✅ Web application installed${NC}"
+else
+    echo -e "${YELLOW}⚠️  Skipping web application installation (--no-gui)${NC}"
+fi
+
 # Step 6: Install desktop entry
 echo ""
 echo "📱 Installing desktop entry..."
@@ -320,13 +359,38 @@ else
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Network Diagnose & Repair
+Name=Network Recovery Tool
 Comment=Diagnose and fix network connectivity issues
-Exec=pkexec /usr/local/bin/network-recover-gui
+Exec=pkexec /usr/local/bin/network-recover-web
 Icon=network-recover
 Terminal=false
-Categories=System;Network;
+Categories=Network;
 StartupNotify=true
+Actions=diagnose;repair;status;snapshot;watch;cli-gui
+
+[Desktop Action diagnose]
+Name=Diagnose Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action repair]
+Name=Repair Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action status]
+Name=Network Status
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action snapshot]
+Name=Save Snapshot
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action watch]
+Name=Monitor Network
+Exec=pkexec /usr/local/bin/network-recover-web
+
+[Desktop Action cli-gui]
+Name=CLI GUI (Zenity)
+Exec=pkexec /usr/local/bin/network-recover-gui
 EOF
     chmod 644 "$APP_DIR/network-recover.desktop"
     echo -e "${GREEN}✅ Desktop entry created${NC}"
@@ -393,7 +457,7 @@ setup_xfce_panel() {
         echo ""
         echo "   To add to your panel right now:"
         echo "   1. Right-click panel → Panel → Add New Items"
-        echo "   2. Search for 'Network Diagnose & Repair'"
+        echo "   2. Search for 'Network Recovery Tool'"
         echo "   3. Click 'Add'"
         echo ""
         xfce4-panel --add=launcher 2>/dev/null || true
@@ -432,6 +496,26 @@ if [[ -x "$BIN_DIR/network-recover-gui" ]]; then
     echo -e "  ✅ GUI wrapper: $BIN_DIR/network-recover-gui"
 else
     echo -e "  ⚠️  GUI wrapper: missing (optional)"
+fi
+
+# Web launcher
+if [[ -x "$BIN_DIR/network-recover-web" ]]; then
+    echo -e "  ✅ Web launcher: $BIN_DIR/network-recover-web"
+else
+    echo -e "  ⚠️  Web launcher: missing (optional)"
+fi
+
+# Web application files
+if [[ -f "$LIB_DIR/web/server.py" ]]; then
+    echo -e "  ✅ Web server: $LIB_DIR/web/server.py"
+else
+    echo -e "  ⚠️  Web server: missing (optional)"
+fi
+
+if [[ -d "$LIB_DIR/web/static" ]]; then
+    echo -e "  ✅ Web UI: $LIB_DIR/web/static"
+else
+    echo -e "  ⚠️  Web UI: missing (optional)"
 fi
 
 # Modular components
@@ -511,12 +595,17 @@ if [[ "$VERIFY_OK" == "true" ]]; then
     echo "    sudo network-recover snapshot"
     echo "    sudo network-recover watch"
     echo ""
+    echo "  Web Interface:"
+    echo "    pkexec /usr/local/bin/network-recover-web"
+    echo "    Or use the desktop launcher"
+    echo ""
     echo "  To add the panel launcher:"
     echo "    Right-click panel → Panel → Add New Items"
-    echo "    Look for 'Network Diagnose & Repair'"
+    echo "    Look for 'Network Recovery Tool'"
     echo ""
     echo "  Or run from terminal:"
-    echo "    pkexec /usr/local/bin/network-recover-gui"
+    echo "    pkexec /usr/local/bin/network-recover-gui  (Zenity)"
+    echo "    pkexec /usr/local/bin/network-recover-web  (Web UI)"
     echo ""
 else
     echo "=============================================="

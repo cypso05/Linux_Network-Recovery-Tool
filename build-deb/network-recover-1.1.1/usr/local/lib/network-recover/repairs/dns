@@ -1,0 +1,47 @@
+#!/bin/bash
+# repairs/dns - DNS repair action
+# Usage: repair_dns
+
+repair_dns() {
+    echo "🔧 Repairing DNS..."
+    local fixed=false
+    
+    # Flush DNS cache via resolvectl
+    if command -v resolvectl &>/dev/null; then
+        if resolvectl flush-caches 2>/dev/null; then
+            echo "  ✅ DNS cache flushed (resolvectl)"
+            fixed=true
+        else
+            echo "  ⚠️  resolvectl flush failed (may not be needed)"
+        fi
+    fi
+    
+    # Flush DNS cache via systemd-resolve (legacy)
+    if command -v systemd-resolve &>/dev/null; then
+        if systemd-resolve --flush-caches 2>/dev/null; then
+            echo "  ✅ DNS cache flushed (systemd-resolve)"
+            fixed=true
+        else
+            echo "  ⚠️  systemd-resolve flush failed"
+        fi
+    fi
+    
+    # Restart systemd-resolved service
+    if systemctl restart systemd-resolved 2>/dev/null; then
+        echo "  ✅ systemd-resolved restarted"
+        fixed=true
+    else
+        echo "  ⚠️  systemd-resolved restart failed (may not be installed)"
+    fi
+    
+    # Verify DNS is working after repair
+    echo "  🔍 Verifying DNS resolution..."
+    if nslookup google.com &>/dev/null || dig google.com +short &>/dev/null; then
+        echo "  ✅ DNS resolution verified"
+        fixed=true
+        return 0
+    else
+        echo "  ❌ DNS still failing after repair"
+        return 1
+    fi
+}

@@ -1,0 +1,320 @@
+#!/bin/bash
+#===============================================================================
+# Network Recovery Tool - Professional GUI v2.0.0
+# 5 dedicated displays with real-time progress tracking
+#===============================================================================
+
+readonly APP_NAME="Network Recovery Pro"
+readonly APP_VERSION="2.0.0"
+readonly APP_ICON="network-wireless"
+readonly MAIN_WIDTH=500
+readonly DETAIL_WIDTH=750
+readonly DETAIL_HEIGHT=550
+
+#===============================================================================
+# UTILITY: Run command with real-time progress
+#===============================================================================
+run_with_progress() {
+    local title="$1"
+    local subtitle="$2"
+    local log_file="$3"
+    shift 3
+    local cmd=("$@")
+    
+    # Start command in background
+    "${cmd[@]}" > "$log_file" 2>&1 &
+    local pid=$!
+    
+    # Track progress from log output
+    (
+        local progress=0
+        echo "0" ; echo "# $subtitle..."
+        
+        while kill -0 $pid 2>/dev/null; do
+            if [[ ! -f "$log_file" ]]; then
+                sleep 0.5
+                continue
+            fi
+            
+            # Map log markers to progress percentages
+            [[ $progress -lt 10 ]] && grep -q "LAYER 1:" "$log_file" 2>/dev/null && { progress=10; echo "$progress"; echo "# Checking physical layer..."; }
+            [[ $progress -lt 20 ]] && grep -q "LAYER 2:" "$log_file" 2>/dev/null && { progress=20; echo "$progress"; echo "# Checking link layer..."; }
+            [[ $progress -lt 30 ]] && grep -q "LAYER 3:" "$log_file" 2>/dev/null && { progress=30; echo "$progress"; echo "# Checking IP layer..."; }
+            [[ $progress -lt 40 ]] && grep -q "LAYER 4:" "$log_file" 2>/dev/null && { progress=40; echo "$progress"; echo "# Checking routing..."; }
+            [[ $progress -lt 50 ]] && grep -q "LAYER 5:" "$log_file" 2>/dev/null && { progress=50; echo "$progress"; echo "# Checking gateway..."; }
+            [[ $progress -lt 60 ]] && grep -q "LAYER 6:" "$log_file" 2>/dev/null && { progress=60; echo "$progress"; echo "# Testing internet..."; }
+            [[ $progress -lt 70 ]] && grep -q "LAYER 7:" "$log_file" 2>/dev/null && { progress=70; echo "$progress"; echo "# Checking DNS..."; }
+            [[ $progress -lt 80 ]] && grep -q "LAYER 8:" "$log_file" 2>/dev/null && { progress=80; echo "$progress"; echo "# Testing HTTPS..."; }
+            [[ $progress -lt 90 ]] && grep -q "REPAIR ENGINE" "$log_file" 2>/dev/null && { progress=90; echo "$progress"; echo "# Running repairs..."; }
+            [[ $progress -lt 100 ]] && grep -q "POST-REPAIR" "$log_file" 2>/dev/null && { progress=95; echo "$progress"; echo "# Verifying..."; }
+            
+            sleep 0.3
+        done
+        
+        wait $pid
+        echo "100" ; echo "# Complete!"
+        sleep 0.5
+    ) | zenity --progress \
+        --title="$title" \
+        --text="$subtitle..." \
+        --percentage=0 \
+        --auto-close \
+        --width=450 \
+        --no-cancel \
+        2>/dev/null
+    
+    return ${PIPESTATUS[0]}
+}
+
+#===============================================================================
+# UTILITY: Show results in a scrollable window
+#===============================================================================
+show_results() {
+    local title="$1"
+    local log_file="$2"
+    local success="$3"
+    
+    if [[ "$success" == "true" ]]; then
+        zenity --info \
+            --title="$title" \
+            --text="✅ Operation completed successfully!\n\nFull details below:" \
+            --width=400 \
+            2>/dev/null
+    else
+        zenity --warning \
+            --title="$title" \
+            --text="⚠️  Some issues were detected.\n\nReview the details below:" \
+            --width=400 \
+            2>/dev/null
+    fi
+    
+    if [[ -f "$log_file" ]]; then
+        zenity --text-info \
+            --title="$title — Full Report" \
+            --width=$DETAIL_WIDTH \
+            --height=$DETAIL_HEIGHT \
+            --filename="$log_file" \
+            --checkbox="Save report to Desktop" \
+            2>/dev/null
+        
+        if [[ $? -eq 0 ]]; then
+            local desktop_file="$HOME/Desktop/network-report-$(date +%Y%m%d-%H%M%S).txt"
+            cp "$log_file" "$desktop_file"
+            if command -v notify-send &>/dev/null; then
+                notify-send -u normal -t 5000 "$APP_NAME" "Report saved to Desktop" --icon=$APP_ICON 2>/dev/null
+            fi
+        fi
+    fi
+}
+
+#===============================================================================
+# DISPLAY 1: Diagnose Network
+#===============================================================================
+show_diagnose() {
+    local log_file="/tmp/network-diagnose-$(date +%Y%m%d-%H%M%S).log"
+    
+    run_with_progress "$APP_NAME — Diagnose" "Starting network diagnosis" "$log_file" \
+        sudo network-recover diagnose
+    
+    local exit_code=$?
+    show_results "Network Diagnosis" "$log_file" "$([[ $exit_code -eq 0 ]] && echo "true" || echo "false")"
+}
+
+#===============================================================================
+# DISPLAY 2: Repair Network (FIXED)
+#===============================================================================
+show_repair() {
+    # Safety warning before repair
+    zenity --question \
+        --title="$APP_NAME — Repair" \
+        --text="⚠️  Network Repair will attempt to fix connectivity issues.\n\nThis may temporarily disrupt:\n• Active connections\n• Running VMs on bridges\n• Kubernetes cluster communication\n\nProceed with repair?" \
+        --width=450 \
+        --ok-label="Repair Now" \
+        --cancel-label="Cancel" \
+        2>/dev/null || return
+    
+    local log_file="/tmp/network-repair-$(date +%Y%m%d-%H%M%S).log"
+    
+    run_with_progress "$APP_NAME — Repair" "Repairing network" "$log_file" \
+        sudo network-recover repair
+    
+    # Determine success by checking log for actual repair outcome
+    if grep -q "✅" "$log_file" 2>/dev/null && ! grep -q "❌" "$log_file" 2>/dev/null; then
+        local success="true"
+        if command -v notify-send &>/dev/null; then
+            notify-send -u normal -t 10000 "$APP_NAME" "✅ Network connectivity restored!" --icon=$APP_ICON 2>/dev/null
+        fi
+    else
+        local success="false"
+        if command -v notify-send &>/dev/null; then
+            notify-send -u critical -t 10000 "$APP_NAME" "⚠️ Some issues remain" --icon=dialog-error 2>/dev/null
+        fi
+    fi
+    
+    show_results "Network Repair" "$log_file" "$success"
+}
+
+#===============================================================================
+# DISPLAY 3: Network Status
+#===============================================================================
+show_status() {
+    local output
+    output=$(sudo network-recover status 2>&1)
+    
+    # Parse with safe defaults
+    local interface=$(echo "$output" | grep "Interface:" | awk '{print $2}' || echo "N/A")
+    local ip=$(echo "$output" | grep "IP:" | awk '{print $2}' || echo "N/A")
+    local gateway=$(echo "$output" | grep "Gateway:" | awk '{print $2}' || echo "N/A")
+    local bridge=$(echo "$output" | grep "Bridge:" | awk '{print $2}' || echo "None")
+    local internet=$(echo "$output" | grep "Internet:" | awk '{print $2}' || echo "Unknown")
+    local dns=$(echo "$output" | grep "DNS:" | awk '{print $2}' || echo "Unknown")
+    local nm=$(echo "$output" | grep "NM:" | awk '{print $2}' || echo "Unknown")
+    local vms=$(echo "$output" | grep "VMs:" | awk '{print $2}' || echo "N/A")
+    
+    # Map status to icons
+    local internet_icon="❌"
+    local dns_icon="❌"
+    local nm_icon="❌"
+    [[ "$internet" == "✅" ]] && internet_icon="✅"
+    [[ "$dns" == "✅" ]] && dns_icon="✅"
+    [[ "$nm" == "✅" ]] && nm_icon="✅"
+    
+    zenity --list \
+        --title="$APP_NAME — Status" \
+        --text="Network Health Overview" \
+        --width=550 \
+        --height=400 \
+        --column="Component" \
+        --column="Status" \
+        --column="Detail" \
+        "🌐 Interface" "" "$interface" \
+        "📡 IP Address" "" "$ip" \
+        "🚪 Gateway" "" "$gateway" \
+        "🔗 Bridge" "" "$bridge" \
+        "🌍 Internet" "$internet_icon Connected" "" \
+        "🔍 DNS" "$dns_icon Working" "" \
+        "⚙️  NetworkManager" "$nm_icon Running" "" \
+        "💻 Virtual Machines" "" "$vms running" \
+        2>/dev/null
+    
+    # Offer detailed view
+    zenity --question \
+        --title="$APP_NAME — Status" \
+        --text="View full status report?" \
+        --width=350 \
+        2>/dev/null && echo "$output" | zenity --text-info \
+            --title="$APP_NAME — Detailed Status" \
+            --width=$DETAIL_WIDTH \
+            --height=$DETAIL_HEIGHT \
+            2>/dev/null
+}
+
+#===============================================================================
+# DISPLAY 4: Save Snapshot
+#===============================================================================
+show_snapshot() {
+    local log_file="/tmp/network-snapshot-$(date +%Y%m%d-%H%M%S).log"
+    
+    (
+        echo "25" ; echo "# Capturing network state..."
+        sudo network-recover snapshot > "$log_file" 2>&1
+        echo "75" ; echo "# Snapshot saved..."
+        sleep 0.5
+        echo "100" ; echo "# Done!"
+    ) | zenity --progress \
+        --title="$APP_NAME — Snapshot" \
+        --text="Saving network snapshot..." \
+        --percentage=0 \
+        --auto-close \
+        --width=400 \
+        --no-cancel \
+        2>/dev/null
+    
+    local snapshot_path=$(grep -oP '/var/lib/network-recover/snapshots/[^ ]+' "$log_file" 2>/dev/null || echo "unknown")
+    
+    zenity --info \
+        --title="$APP_NAME — Snapshot Saved" \
+        --text="✅ Network snapshot saved successfully!\n\n📍 Location: $snapshot_path\n\nUse this snapshot to compare network state before and after changes." \
+        --width=500 \
+        2>/dev/null
+}
+
+#===============================================================================
+# DISPLAY 5: Monitor Network
+#===============================================================================
+show_watch() {
+    # Detect available terminal
+    local terminal=""
+    for term in xfce4-terminal gnome-terminal konsole xterm; do
+        if command -v $term &>/dev/null; then
+            terminal=$term
+            break
+        fi
+    done
+    
+    if [[ -z "$terminal" ]]; then
+        zenity --error \
+            --title="$APP_NAME — Error" \
+            --text="No terminal emulator found.\n\nPlease install one:\nsudo apt install xfce4-terminal" \
+            --width=400 \
+            2>/dev/null
+        return
+    fi
+    
+    zenity --info \
+        --title="$APP_NAME — Monitor" \
+        --text="📡 Starting real-time network monitor\n\nDisplays: Internet • DNS • Gateway • Interface\n\nPress Ctrl+C in the terminal window to stop monitoring." \
+        --width=450 \
+        --ok-label="Start Monitor" \
+        2>/dev/null
+    
+    $terminal -T "Network Monitor — $APP_NAME" -e "sudo network-recover watch" &
+}
+
+#===============================================================================
+# MAIN MENU
+#===============================================================================
+show_main_menu() {
+    zenity --list \
+        --title="$APP_NAME v$APP_VERSION" \
+        --text="Select an action:" \
+        --width=500 \
+        --height=380 \
+        --column="Action" \
+        --column="Description" \
+        --column="Impact" \
+        "🔍  Diagnose" "Full 11-layer diagnostic — no changes" "🟢 Safe" \
+        "🔧  Repair" "Diagnose + intelligent repair" "🟡 May disrupt" \
+        "📊  Status" "Quick network health overview" "🟢 Safe" \
+        "💾  Snapshot" "Save current network state" "🟢 Safe" \
+        "📡  Monitor" "Real-time network monitoring" "🟢 Safe" \
+        2>/dev/null
+}
+
+#===============================================================================
+# ENTRY POINT
+#===============================================================================
+
+# Handle direct command-line arguments (for .desktop file integration)
+if [[ -n "${1:-}" ]]; then
+    case "$1" in
+        diagnose|diag)   show_diagnose; exit $? ;;
+        repair|fix)      show_repair; exit $? ;;
+        status|stat)     show_status; exit $? ;;
+        snapshot|snap)   show_snapshot; exit $? ;;
+        watch|monitor)   show_watch; exit $? ;;
+        *)               show_main_menu; exit 0 ;;
+    esac
+fi
+
+# Interactive mode — show main menu
+choice=$(show_main_menu)
+[[ -z "$choice" ]] && exit 0
+
+case "$choice" in
+    *Diagnose*)  show_diagnose ;;
+    *Repair*)    show_repair ;;
+    *Status*)    show_status ;;
+    *Snapshot*)  show_snapshot ;;
+    *Monitor*)   show_watch ;;
+esac

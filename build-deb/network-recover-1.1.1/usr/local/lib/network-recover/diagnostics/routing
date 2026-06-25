@@ -1,0 +1,12 @@
+#!/bin/bash
+check_routing() {
+    local gateway=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)
+    
+    if [[ -n "$gateway" ]]; then
+        echo "  ✅ Default gateway: $gateway"
+        return 0
+    else
+        echo "  ❌ No default route found"
+        return 1
+    fi
+}

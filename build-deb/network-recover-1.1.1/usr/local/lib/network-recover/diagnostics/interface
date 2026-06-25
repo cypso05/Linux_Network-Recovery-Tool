@@ -1,0 +1,132 @@
+#!/bin/bash
+# diagnostics/interface - interface layer diagnostic
+# Usage: check_interface [iface]
+# Enhanced with detailed interface information and production-ready output
+
+check_interface() {
+    local iface="${1:-$DEFAULT_IFACE}"
+    local all_pass=true
+    
+    # Check if interface exists
+    if [[ ! -d "/sys/class/net/$iface" ]]; then
+        echo "  ❌ Interface $iface does not exist"
+        return 1
+    fi
+    
+    # Gather interface details
+    local operstate=$(cat "/sys/class/net/$iface/operstate" 2>/dev/null || echo "unknown")
+    local mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null || echo "unknown")
+    local mtu=$(cat "/sys/class/net/$iface/mtu" 2>/dev/null || echo "unknown")
+    local carrier=$(cat "/sys/class/net/$iface/carrier" 2>/dev/null || echo "0")
+    local speed=$(cat "/sys/class/net/$iface/speed" 2>/dev/null || echo "unknown")
+    local duplex=$(cat "/sys/class/net/$iface/duplex" 2>/dev/null || echo "unknown")
+    local flags=$(ip link show "$iface" 2>/dev/null | grep -oP 'flags=\K[^ ]+' || echo "unknown")
+    
+    # Determine interface type
+    local iface_type="unknown"
+    if [[ -d "/sys/class/net/$iface/wireless" ]] || [[ -d "/sys/class/net/$iface/phy80211" ]]; then
+        iface_type="wireless"
+    elif [[ -d "/sys/class/net/$iface/bridge" ]]; then
+        iface_type="bridge"
+    elif [[ -d "/sys/class/net/$iface/bonding" ]]; then
+        iface_type="bond"
+    elif [[ "$iface" =~ ^(vnet|virbr) ]]; then
+        iface_type="virtual"
+    else
+        iface_type="ethernet"
+    fi
+    
+    # Display interface info with nice formatting
+    echo "  ┌─ Interface: $iface"
+    echo "  │  Type: $iface_type"
+    echo "  │  MAC: $mac"
+    echo "  │  MTU: $mtu"
+    echo "  │  Flags: $flags"
+    echo "  │  State: $operstate"
+    
+    # Additional details based on interface type
+    case "$iface_type" in
+        wireless)
+            local ssid=$(iwconfig "$iface" 2>/dev/null | grep -oP 'ESSID:"\K[^"]+' || echo "not connected")
+            local signal=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Signal level=\K[0-9-]+' || echo "unknown")
+            local freq=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Frequency:\K[0-9.]+ GHz' || echo "unknown")
+            echo "  │  SSID: $ssid"
+            echo "  │  Signal: ${signal} dBm"
+            echo "  │  Frequency: $freq"
+            ;;
+        bridge)
+            local slaves=$(bridge link show "$iface" 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | tr '\n' ', ' | sed 's/, $//')
+            echo "  │  Slaves: ${slaves:-none}"
+            ;;
+        ethernet)
+            [[ "$speed" != "unknown" ]] && echo "  │  Speed: $speed Mb/s"
+            [[ "$duplex" != "unknown" ]] && echo "  │  Duplex: $duplex"
+            ;;
+    esac
+    
+    echo "  └─────────────────────────────"
+    
+    # Check if carrier is present (link detected)
+    if [[ "$carrier" == "1" ]]; then
+        echo "  ✅ Carrier: present"
+    else
+        if [[ "$iface_type" == "wireless" ]]; then
+            echo "  ⚠️  Carrier: no WiFi connection"
+        else
+            echo "  ❌ Carrier: LOST - Check cable"
+        fi
+        all_pass=false
+    fi
+    
+    # Check interface state
+    if [[ "$operstate" == "up" ]]; then
+        echo "  ✅ Interface state: $operstate"
+    elif [[ "$operstate" == "dormant" ]]; then
+        echo "  ⚠️  Interface state: $operstate (waiting for carrier)"
+        all_pass=false
+    else
+        echo "  ❌ Interface state: $operstate (should be up)"
+        all_pass=false
+    fi
+    
+    # Check if interface is UP from ip command
+    if ip link show "$iface" 2>/dev/null | grep -q "UP"; then
+        echo "  ✅ Interface flags: UP"
+    else
+        echo "  ❌ Interface flags: DOWN"
+        all_pass=false
+    fi
+    
+    # Check MTU sanity
+    if [[ "$mtu" != "unknown" ]] && [[ "$mtu" -lt 1280 ]]; then
+        echo "  ⚠️  MTU is very low ($mtu) - may cause issues"
+        all_pass=false
+    fi
+    
+    # Check for interface errors
+    local rx_errors=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo "0")
+    local tx_errors=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo "0")
+    if [[ "$rx_errors" != "0" ]] || [[ "$tx_errors" != "0" ]]; then
+        echo "  ⚠️  Errors: RX=$rx_errors, TX=$tx_errors"
+        all_pass=false
+    fi
+    
+    # Check for dropped packets
+    local rx_dropped=$(cat "/sys/class/net/$iface/statistics/rx_dropped" 2>/dev/null || echo "0")
+    local tx_dropped=$(cat "/sys/class/net/$iface/statistics/tx_dropped" 2>/dev/null || echo "0")
+    if [[ "$rx_dropped" != "0" ]] || [[ "$tx_dropped" != "0" ]]; then
+        echo "  ⚠️  Dropped: RX=$rx_dropped, TX=$tx_dropped"
+        all_pass=false
+    fi
+    
+    # Check for collisions
+    local collisions=$(cat "/sys/class/net/$iface/statistics/collisions" 2>/dev/null || echo "0")
+    if [[ "$collisions" != "0" ]]; then
+        echo "  ⚠️  Collisions: $collisions"
+        all_pass=false
+    fi
+    
+    echo ""
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}

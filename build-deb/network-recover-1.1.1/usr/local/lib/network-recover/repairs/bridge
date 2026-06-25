@@ -1,0 +1,102 @@
+#!/bin/bash
+# repairs/bridge - bridge repair action with slave re-attachment
+# Usage: repair_bridge [bridge] [slave_iface]
+
+repair_bridge() {
+    local bridge="${1:-$BRIDGE_IFACE}"
+    local slave="${2:-$DEFAULT_IFACE}"
+    
+    echo "🔧 Repairing bridge $bridge..."
+    
+    # Check if bridge is configured
+    if [[ -z "$bridge" ]]; then
+        echo "  ℹ️  No bridge configured"
+        return 0
+    fi
+    
+    # Check if bridge exists
+    if ! ip link show "$bridge" &>/dev/null; then
+        echo "  ❌ Bridge $bridge does not exist"
+        return 1
+    fi
+    
+    # Show current slaves
+    local current_slaves=$(bridge link show "$bridge" 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | tr '\n' ' ')
+    echo "  ℹ️  Current slaves: ${current_slaves:-none}"
+    
+    # Check if bridge is UP
+    if ip link show "$bridge" | grep -q "UP"; then
+        echo "  ✅ Bridge $bridge is already UP"
+    else
+        echo "  📌 Bringing bridge up..."
+        # Try nmcli first
+        if command -v nmcli &>/dev/null && nmcli con up "$bridge" 2>/dev/null; then
+            echo "  ✅ Bridge $bridge brought up (nmcli)"
+        else
+            # Try ip link as fallback
+            if ip link set "$bridge" up 2>/dev/null; then
+                echo "  ✅ Bridge $bridge brought up (ip link)"
+            else
+                echo "  ❌ Failed to bring up bridge $bridge"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Check slave if specified
+    if [[ -n "$slave" ]]; then
+        # Check if slave interface exists
+        if ! ip link show "$slave" &>/dev/null; then
+            echo "  ⚠️  Slave interface $slave does not exist - skipping"
+            return 0
+        fi
+        
+        # Wait briefly for state to settle
+        sleep 1
+        
+        # Check if slave is attached to bridge
+        if bridge link show "$bridge" 2>/dev/null | grep -q "$slave"; then
+            echo "  ✅ $slave is enslaved to $bridge"
+            # Ensure slave is UP
+            if ! ip link show "$slave" | grep -q "UP"; then
+                echo "  ⚠️  $slave is enslaved but DOWN - bringing up..."
+                ip link set "$slave" up 2>/dev/null
+                if ip link show "$slave" | grep -q "UP"; then
+                    echo "  ✅ $slave is now UP"
+                fi
+            fi
+        else
+            echo "  ⚠️  $slave NOT enslaved - attempting re-attachment..."
+            
+            # Re-attach slave to bridge
+            if ip link set "$slave" master "$bridge" 2>/dev/null; then
+                echo "  ✅ $slave re-enslaved to $bridge"
+                
+                # Bring slave up after attachment
+                ip link set "$slave" up 2>/dev/null
+                sleep 1
+                if ip link show "$slave" | grep -q "UP"; then
+                    echo "  ✅ $slave is UP"
+                else
+                    echo "  ⚠️  $slave is enslaved but DOWN"
+                fi
+            else
+                echo "  ❌ Failed to re-enslave $slave to $bridge"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Final verification
+    sleep 1
+    if ip link show "$bridge" | grep -q "UP"; then
+        echo "  ✅ Bridge $bridge is operational"
+        # Show final slave list
+        local final_slaves=$(bridge link show "$bridge" 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | tr '\n' ' ')
+        echo "  ℹ️  Slaves: ${final_slaves:-none}"
+        return 0
+    else
+        echo "  ❌ Bridge $bridge is still DOWN"
+        return 1
+    fi
+}

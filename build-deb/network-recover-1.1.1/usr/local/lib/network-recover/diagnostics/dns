@@ -1,0 +1,12 @@
+#!/bin/bash
+check_dns() {
+    local domain="${1:-google.com}"
+    
+    if nslookup "$domain" &>/dev/null; then
+        echo "  ✅ DNS resolution works ($domain)"
+        return 0
+    else
+        echo "  ❌ DNS resolution failed for $domain"
+        return 1
+    fi
+}

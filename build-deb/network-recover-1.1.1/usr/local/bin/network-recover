@@ -1,0 +1,1351 @@
+#!/bin/bash
+# /usr/local/bin/network-recover
+# Production-Grade Linux Network Recovery Engine
+# Version: 1.1.1
+# License: MIT
+#
+# Usage:
+#   sudo network-recover diagnose   - Run full diagnostic (no changes)
+#   sudo network-recover repair     - Diagnose and attempt repairs
+#   sudo network-recover status     - Quick network health check
+#   sudo network-recover snapshot   - Save current network state
+#   sudo network-recover watch      - Monitor network health in real-time
+#
+# Supports: Debian, Ubuntu, Fedora, Arch, MX Linux, RHEL, etc.
+
+set -euo pipefail
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+readonly VERSION="1.1.1"
+readonly SCRIPT_NAME="network-recover"
+
+# Directories
+readonly LOG_DIR="/var/log/network-events"
+readonly SNAPSHOT_DIR="/var/lib/network-recover/snapshots"
+
+# Test targets (multiple for redundancy)
+readonly IP_TARGETS=("1.1.1.1" "8.8.8.8" "9.9.9.9")
+readonly HTTPS_TARGETS=(
+    "https://cloudflare.com"
+    "https://google.com"
+    "https://github.com"
+    "https://microsoft.com"
+)
+readonly DNS_TARGETS=("google.com" "cloudflare.com" "github.com")
+readonly CAPTIVE_PORTAL_TEST="http://connectivitycheck.gstatic.com/generate_204"
+
+# Timeouts
+readonly PING_TIMEOUT=2
+readonly CURL_TIMEOUT=5
+readonly DNS_TIMEOUT=3
+
+# ============================================================
+# INITIALIZATION
+# ============================================================
+
+# Timestamp must be generated at runtime, not script load time
+generate_timestamp() {
+    date +%Y-%m-%d_%H-%M-%S
+}
+
+mkdir -p "$LOG_DIR" "$SNAPSHOT_DIR"
+
+# Determine the default interface dynamically with fallback
+DEFAULT_IFACE=$(ip route | awk '/default/ {print $5; exit}' 2>/dev/null || echo "")
+if [[ -z "$DEFAULT_IFACE" ]]; then
+    # No default route - find any interface with an IP address
+    DEFAULT_IFACE=$(ip -4 addr show 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | grep -v lo | head -1 || echo "eth0")
+fi
+DEFAULT_GATEWAY=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null || echo "")
+
+# ============================================================
+# ALLOW INTERFACE OVERRIDE VIA ENVIRONMENT VARIABLE
+# ============================================================
+# For testing/scripting: export NETWORK_RECOVER_IFACE=br0
+# This ensures the test script can specify which interface to repair
+# even when the default route is missing.
+if [[ -n "${NETWORK_RECOVER_IFACE:-}" ]]; then
+    DEFAULT_IFACE="$NETWORK_RECOVER_IFACE"
+fi
+
+# ============================================================
+# IMPROVED BRIDGE DETECTION (prioritize br0 over lxcbr0)
+# ============================================================
+BRIDGE_IFACE=""
+
+# Method 1: Use ip to list bridge devices (prefer br0)
+if command -v ip &>/dev/null; then
+    for bridge in $(ip -br link show type bridge 2>/dev/null | awk '{print $1}'); do
+        if [[ "$bridge" == "br0" ]]; then
+            BRIDGE_IFACE="$bridge"
+            break
+        elif [[ -z "$BRIDGE_IFACE" ]]; then
+            BRIDGE_IFACE="$bridge"
+        fi
+    done
+fi
+
+# Method 2: Check via sysfs (fallback, prefer br0)
+if [[ -z "$BRIDGE_IFACE" ]]; then
+    for iface in /sys/class/net/*; do
+        if [[ -d "$iface/bridge" ]]; then
+            local bridge_name=$(basename "$iface")
+            if [[ "$bridge_name" == "br0" ]]; then
+                BRIDGE_IFACE="$bridge_name"
+                break
+            elif [[ -z "$BRIDGE_IFACE" ]]; then
+                BRIDGE_IFACE="$bridge_name"
+            fi
+        fi
+    done
+fi
+
+# Method 3: Check via NetworkManager (last resort)
+if [[ -z "$BRIDGE_IFACE" ]] && command -v nmcli &>/dev/null; then
+    BRIDGE_IFACE=$(nmcli -t -f TYPE,DEVICE connection show --active 2>/dev/null | \
+        grep "^bridge:" | cut -d: -f2 | grep -v "^lxc" | head -1)
+fi
+
+# If still empty, fallback to DEFAULT_IFACE
+if [[ -z "$BRIDGE_IFACE" ]]; then
+    BRIDGE_IFACE="$DEFAULT_IFACE"
+fi
+
+# Detect virtualization
+HAS_LIBVIRT=$(command -v virsh &>/dev/null && echo "true" || echo "false")
+HAS_KUBECTL=$(command -v kubectl &>/dev/null && echo "true" || echo "false")
+HAS_DOCKER=$(command -v docker &>/dev/null && echo "true" || echo "false")
+
+# ============================================================
+# SOURCE MODULAR COMPONENTS (if available)
+# ============================================================
+# These override the built-in functions with modular versions
+# when the tool is installed with full modular support.
+# Falls back gracefully to built-in implementations if modules
+# are not present (standalone/core-only installation).
+readonly MODULE_DIR="/usr/local/lib/network-recover"
+
+if [[ -d "$MODULE_DIR/diagnostics" ]]; then
+    for mod in "$MODULE_DIR/diagnostics"/*; do
+        [[ -f "$mod" ]] && source "$mod" 2>/dev/null
+    done
+fi
+
+if [[ -d "$MODULE_DIR/repairs" ]]; then
+    for mod in "$MODULE_DIR/repairs"/*; do
+        [[ -f "$mod" ]] && source "$mod" 2>/dev/null
+    done
+fi
+
+if [[ -d "$MODULE_DIR/collectors" ]]; then
+    for mod in "$MODULE_DIR/collectors"/*; do
+        [[ -f "$mod" ]] && source "$mod" 2>/dev/null
+    done
+fi
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+log() {
+    local level="${1:-INFO}"
+    shift
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+}
+
+log_result() {
+    local status="$1"
+    local message="$2"
+    if [[ "$status" == "PASS" ]]; then
+        echo -e "  ✅ $message"
+    elif [[ "$status" == "FAIL" ]]; then
+        echo -e "  ❌ $message"
+    elif [[ "$status" == "WARN" ]]; then
+        echo -e "  ⚠️  $message"
+    elif [[ "$status" == "INFO" ]]; then
+        echo -e "  ℹ️  $message"
+    else
+        echo "  $message"
+    fi
+}
+
+save_snapshot() {
+    local TIMESTAMP=$(generate_timestamp)
+    local snapshot_file="$SNAPSHOT_DIR/snapshot-${TIMESTAMP}.log"
+    {
+        echo "=== NETWORK SNAPSHOT: $TIMESTAMP ==="
+        echo "=== System Info ==="
+        uname -a
+        cat /etc/os-release 2>/dev/null || echo "No os-release"
+        echo ""
+        echo "=== Interface Info ==="
+        ip addr show 2>/dev/null || echo "No interfaces"
+        echo ""
+        echo "=== Route Table ==="
+        ip route show 2>/dev/null || echo "No routes"
+        echo ""
+        echo "=== ARP Table ==="
+        ip neigh show 2>/dev/null || echo "No ARP"
+        echo ""
+        echo "=== Bridge Info ==="
+        bridge link show 2>/dev/null || echo "No bridges found"
+        echo ""
+        echo "=== NetworkManager Status ==="
+        nmcli general status 2>/dev/null || echo "NetworkManager not available"
+        nmcli device status 2>/dev/null || echo ""
+        echo ""
+        echo "=== DNS Configuration ==="
+        cat /etc/resolv.conf 2>/dev/null || echo "No resolv.conf"
+        resolvectl status 2>/dev/null || echo "resolvectl not available"
+        echo ""
+        echo "=== Active Connections ==="
+        ss -tulpn 2>/dev/null | head -50
+        echo ""
+        echo "=== Recent Network Logs ==="
+        journalctl -u NetworkManager -n 50 --no-pager 2>/dev/null || echo "No NetworkManager logs"
+        echo ""
+        echo "=== Kernel Network Stats ==="
+        cat /proc/net/dev 2>/dev/null || echo "No stats"
+        echo ""
+        echo "=== End Snapshot ==="
+    } > "$snapshot_file"
+    echo "$snapshot_file"
+}
+
+# ============================================================
+# UTILITY: Detect IP assignment method
+# ============================================================
+
+detect_ip_method() {
+    local iface="$1"
+    if [[ -z "$iface" ]]; then
+        echo "unknown"
+        return
+    fi
+    # Check if DHCP is configured via NetworkManager
+    if command -v nmcli &>/dev/null; then
+        if nmcli -t -f DHCP4 device show "$iface" 2>/dev/null | grep -q 'DHCP4.OPTION'; then
+            echo "dhcp"
+            return
+        fi
+    fi
+    # Check for dhclient lease files
+    if [[ -f "/var/lib/dhcp/dhclient.${iface}.leases" ]] || [[ -f "/var/lib/dhclient/dhclient-${iface}.leases" ]]; then
+        echo "dhcp"
+        return
+    fi
+    # Default to static
+    echo "static"
+}
+
+# ============================================================
+# LAYER 1: PHYSICAL LAYER
+# ============================================================
+
+check_physical() {
+    log "INFO" "=== LAYER 1: PHYSICAL ==="
+    local all_pass=true
+    
+    if [[ -z "$DEFAULT_IFACE" ]]; then
+        log_result "FAIL" "No interface detected"
+        return 1
+    fi
+    
+    # Check if interface exists
+    if [[ ! -d "/sys/class/net/$DEFAULT_IFACE" ]]; then
+        log_result "FAIL" "Interface $DEFAULT_IFACE does not exist"
+        return 1
+    fi
+    
+    # Check carrier - with bridge interface support
+    if [[ -f "/sys/class/net/$DEFAULT_IFACE/carrier" ]] && [[ -r "/sys/class/net/$DEFAULT_IFACE/carrier" ]]; then
+        local carrier=$(cat "/sys/class/net/$DEFAULT_IFACE/carrier" 2>/dev/null || echo "0")
+        if [[ "$carrier" == "1" ]]; then
+            log_result "PASS" "Carrier: present"
+        elif [[ "$carrier" != "0" ]]; then
+            # Bridge or virtual interface without carrier support
+            log_result "INFO" "Carrier: not applicable for this interface type"
+        else
+            log_result "FAIL" "Carrier: LOST - Check cable/WiFi"
+            all_pass=false
+        fi
+    else
+        # Bridge interfaces often have carrier file but can't be read
+        # Check if it's a bridge interface
+        if ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "bridge"; then
+            log_result "INFO" "Carrier: not applicable for bridge interface"
+        else
+            log_result "INFO" "Carrier: not available for this interface"
+        fi
+    fi
+    
+    # Check operstate
+    if [[ -f "/sys/class/net/$DEFAULT_IFACE/operstate" ]]; then
+        local state=$(cat "/sys/class/net/$DEFAULT_IFACE/operstate" 2>/dev/null || echo "unknown")
+        if [[ "$state" == "up" ]]; then
+            log_result "PASS" "Interface state: $state"
+        else
+            log_result "FAIL" "Interface state: $state (should be up)"
+            all_pass=false
+        fi
+    fi
+    
+    # Check speed and duplex (ethernet only) - with timeout to prevent hangs
+    if command -v ethtool &>/dev/null && [[ -e "/sys/class/net/$DEFAULT_IFACE/device" ]]; then
+        local speed=$(timeout 2 ethtool "$DEFAULT_IFACE" 2>/dev/null | grep -i "Speed:" | awk '{print $2}')
+        local duplex=$(timeout 2 ethtool "$DEFAULT_IFACE" 2>/dev/null | grep -i "Duplex:" | awk '{print $2}')
+        if [[ -n "$speed" ]]; then
+            log_result "INFO" "Speed: $speed, Duplex: $duplex"
+        fi
+    fi
+    
+    if [[ "$all_pass" == "true" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ============================================================
+# LAYER 2: LINK LAYER (Bridge, Bond, VLAN)
+# ============================================================
+
+check_link_layer() {
+    log "INFO" "=== LAYER 2: LINK LAYER ==="
+    local all_pass=true
+    
+    if [[ -z "$DEFAULT_IFACE" ]]; then
+        log_result "FAIL" "No interface detected"
+        return 1
+    fi
+    
+    # Check if interface is UP
+    if ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "UP"; then
+        log_result "PASS" "Interface $DEFAULT_IFACE is UP"
+    else
+        log_result "FAIL" "Interface $DEFAULT_IFACE is DOWN"
+        all_pass=false
+    fi
+    
+    # Check bridge if present
+    if [[ -n "$BRIDGE_IFACE" ]]; then
+        if ip link show "$BRIDGE_IFACE" 2>/dev/null | grep -q "UP"; then
+            log_result "PASS" "Bridge $BRIDGE_IFACE is UP"
+        else
+            log_result "FAIL" "Bridge $BRIDGE_IFACE is DOWN"
+            all_pass=false
+        fi
+        
+        # Check if interface is enslaved to bridge
+        if bridge link show 2>/dev/null | grep -q "$DEFAULT_IFACE"; then
+            log_result "PASS" "$DEFAULT_IFACE enslaved to $BRIDGE_IFACE"
+        else
+            log_result "WARN" "$DEFAULT_IFACE NOT enslaved to $BRIDGE_IFACE"
+            all_pass=false
+        fi
+    fi
+    
+    # Check for vnet interfaces (KVM)
+    if [[ "$HAS_LIBVIRT" == "true" ]]; then
+        local vnets=$(ip link show 2>/dev/null | grep -oP 'vnet\d+' | sort -u)
+        if [[ -n "$vnets" ]]; then
+            for vnet in $vnets; do
+                if bridge link show 2>/dev/null | grep -q "$vnet"; then
+                    log_result "PASS" "$vnet is bridged"
+                else
+                    log_result "WARN" "$vnet NOT bridged"
+                    all_pass=false
+                fi
+            done
+        fi
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 3: IP LAYER
+# ============================================================
+
+check_ip_layer() {
+    log "INFO" "=== LAYER 3: IP ==="
+    local all_pass=true
+    
+    local iface_to_check="${BRIDGE_IFACE:-$DEFAULT_IFACE}"
+    if [[ -z "$iface_to_check" ]]; then
+        log_result "FAIL" "No interface to check"
+        return 1
+    fi
+    
+    # Check IPv4 address - FIXED: using \K instead of lookbehind
+    local ipv4=$(ip -4 addr show "$iface_to_check" 2>/dev/null | grep -oP 'inet\s\K\d+(\.\d+){3}/\d+' | head -1)
+    
+    if [[ -n "$ipv4" ]]; then
+        log_result "PASS" "IPv4: $ipv4"
+        
+        # Check for duplicate IP - FIXED: compare MAC addresses
+        local ip_only=$(echo "$ipv4" | cut -d/ -f1)
+        local my_mac=$(ip link show "$iface_to_check" 2>/dev/null | grep -oP 'link/ether \K[^ ]+')
+        if [[ -n "$my_mac" ]]; then
+            local arp_output=$(arping -c 2 -I "$iface_to_check" "$ip_only" 2>/dev/null)
+            local arp_mac=$(echo "$arp_output" | grep -oP 'from \K[^ ]+' | head -1)
+            if [[ -n "$arp_mac" ]] && [[ "$arp_mac" != "$my_mac" ]]; then
+                log_result "FAIL" "Duplicate IP detected! Own MAC: $my_mac, Duplicate MAC: $arp_mac"
+                all_pass=false
+            fi
+        fi
+    else
+        log_result "FAIL" "No IPv4 address on $iface_to_check"
+        all_pass=false
+    fi
+    
+    # Check IPv6 - FIXED: using \K instead of lookbehind
+    local ipv6=$(ip -6 addr show "$iface_to_check" 2>/dev/null | grep -oP 'inet6\s\K[a-f0-9:]+' | grep -v "^::1" | head -1)
+    if [[ -n "$ipv6" ]]; then
+        log_result "INFO" "IPv6: $ipv6"
+    else
+        log_result "INFO" "No IPv6 address (may be disabled)"
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 4: ROUTING
+# ============================================================
+
+check_routing() {
+    log "INFO" "=== LAYER 4: ROUTING ==="
+    local all_pass=true
+    
+    # Check default route
+    if [[ -n "$DEFAULT_GATEWAY" ]]; then
+        log_result "PASS" "Default gateway: $DEFAULT_GATEWAY"
+    else
+        log_result "FAIL" "No default route found"
+        return 1
+    fi
+    
+    # Check for multiple default routes (common problem)
+    local default_count=$(ip route 2>/dev/null | grep -c "^default" || echo "0")
+    if [[ "$default_count" -gt 1 ]]; then
+        log_result "WARN" "Multiple default routes found ($default_count)"
+        ip route | grep "^default"
+        all_pass=false
+    fi
+    
+    # Check for blackhole routes
+    if ip route 2>/dev/null | grep -q "blackhole"; then
+        log_result "WARN" "Blackhole routes detected"
+        ip route | grep "blackhole"
+        all_pass=false
+    fi
+    
+    # Check route metrics
+    if ip route 2>/dev/null | grep -q "metric"; then
+        log_result "INFO" "Route metrics configured"
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 5: GATEWAY
+# ============================================================
+
+check_gateway() {
+    log "INFO" "=== LAYER 5: GATEWAY ==="
+    
+    if [[ -z "$DEFAULT_GATEWAY" ]]; then
+        log_result "FAIL" "No default gateway - skipping gateway checks"
+        return 1
+    fi
+    
+    local all_pass=true
+    
+    # Check ARP entry
+    if ip neigh show "$DEFAULT_GATEWAY" 2>/dev/null | grep -q "REACHABLE"; then
+        log_result "PASS" "Gateway ARP: REACHABLE"
+    elif ip neigh show "$DEFAULT_GATEWAY" 2>/dev/null | grep -q "STALE"; then
+        log_result "WARN" "Gateway ARP: STALE - may need refresh"
+        all_pass=false
+    else
+        log_result "WARN" "No ARP entry for gateway"
+        all_pass=false
+    fi
+    
+    # Ping gateway with short timeout
+    if ping -c 1 -W "$PING_TIMEOUT" "$DEFAULT_GATEWAY" &>/dev/null; then
+        log_result "PASS" "Gateway reachable (ICMP)"
+    else
+        # Try ARP ping
+        if arping -c 1 -W 1 "$DEFAULT_GATEWAY" &>/dev/null; then
+            log_result "WARN" "Gateway responds to ARP but not ICMP"
+        else
+            log_result "FAIL" "Gateway unreachable"
+            all_pass=false
+        fi
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 6: INTERNET REACHABILITY
+# ============================================================
+
+check_internet() {
+    log "INFO" "=== LAYER 6: INTERNET REACHABILITY ==="
+    local reachable_count=0
+    local total_targets=${#IP_TARGETS[@]}
+    
+    for target in "${IP_TARGETS[@]}"; do
+        if ping -c 1 -W "$PING_TIMEOUT" "$target" &>/dev/null; then
+            log_result "PASS" "$target reachable (ICMP)"
+            ((reachable_count++))
+        else
+            # Try TCP connect as fallback
+            if command -v nc &>/dev/null && nc -zv -w 3 "$target" 443 &>/dev/null 2>&1; then
+                log_result "PASS" "$target reachable (TCP/443)"
+                ((reachable_count++))
+            else
+                log_result "WARN" "$target unreachable"
+            fi
+        fi
+    done
+    
+    # Require quorum (at least 2 out of 3)
+    if [[ "$reachable_count" -ge 2 ]]; then
+        log_result "PASS" "Internet reachable ($reachable_count/$total_targets)"
+        return 0
+    else
+        log_result "FAIL" "Internet unreachable ($reachable_count/$total_targets)"
+        return 1
+    fi
+}
+
+# ============================================================
+# LAYER 7: DNS
+# ============================================================
+
+check_dns() {
+    log "INFO" "=== LAYER 7: DNS ==="
+    local all_pass=true
+    
+    # Check resolv.conf
+    if [[ -f /etc/resolv.conf ]]; then
+        local nameservers=$(grep "^nameserver" /etc/resolv.conf 2>/dev/null | wc -l)
+        if [[ "$nameservers" -gt 0 ]]; then
+            log_result "PASS" "DNS servers configured ($nameservers)"
+            grep "^nameserver" /etc/resolv.conf 2>/dev/null | while read -r line; do
+                log_result "INFO" "  $line"
+            done
+        else
+            log_result "FAIL" "No nameservers in /etc/resolv.conf"
+            all_pass=false
+        fi
+    fi
+    
+    # Test DNS resolution with multiple servers
+    local dns_success=0
+    for domain in "${DNS_TARGETS[@]}"; do
+        if nslookup "$domain" &>/dev/null; then
+            log_result "PASS" "$domain resolves"
+            ((dns_success++))
+        else
+            # Try with specific DNS server
+            if dig "@1.1.1.1" "$domain" +timeout=2 &>/dev/null; then
+                log_result "PASS" "$domain resolves (via 1.1.1.1)"
+                ((dns_success++))
+            else
+                log_result "WARN" "$domain resolution failed"
+            fi
+        fi
+    done
+    
+    # Check for DNS anomalies (meaningful security checks)
+    if command -v dig &>/dev/null; then
+        local dns_anomaly=false
+        local test_domain="google.com"  # Using a stable, well-known domain
+        
+        # Test 1: Detect hijacking via private IP responses
+        # If google.com resolves to a private/loopback IP, DNS is hijacked
+        local hijack_test=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        if [[ -n "$hijack_test" ]]; then
+            # Check for private, loopback, or link-local addresses
+            if [[ "$hijack_test" =~ ^(127\.|10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[0-1]\.|0\.|169\.254\.) ]]; then
+                log_result "FAIL" "DNS hijacking detected - $test_domain resolves to private IP: $hijack_test"
+                dns_anomaly=true
+                all_pass=false
+            fi
+        fi
+        
+        # Test 2: Detect DNS interception via response time anomaly
+        # If the first query takes > 500ms, something is intercepting DNS
+        local dns_time=$(dig "$test_domain" +time=1 +tries=1 2>/dev/null | grep -oP 'Query time: \K[0-9]+' || echo "0")
+        if [[ "$dns_time" -gt 500 ]] && [[ "$dns_time" != "0" ]]; then
+            log_result "WARN" "DNS response time high (${dns_time}ms) - possible interception"
+            dns_anomaly=true
+        fi
+        
+        # Test 3: Verify configured DNS servers actually respond
+        local ns_list=$(grep "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{print $2}')
+        local dead_ns=0
+        for ns in $ns_list; do
+            if ! dig @"$ns" "$test_domain" +time=1 +tries=1 &>/dev/null; then
+                log_result "WARN" "DNS server $ns not responding"
+                dns_anomaly=true
+                ((dead_ns++))
+            fi
+        done
+        
+        # Test 4: Response consistency (optional - detects cache poisoning)
+        local ip1=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        sleep 0.5
+        local ip2=$(dig +short "$test_domain" 2>/dev/null | head -1)
+        if [[ -n "$ip1" ]] && [[ -n "$ip2" ]] && [[ "$ip1" != "$ip2" ]] && [[ ! "$ip1" =~ ^(127\.|10\.|192\.168\.) ]] && [[ ! "$ip2" =~ ^(127\.|10\.|192\.168\.) ]]; then
+            log_result "INFO" "DNS responses vary (normal load balancing)"
+            log_result "INFO" "  $test_domain: $ip1 and $ip2"
+        fi
+        
+        if [[ "$dns_anomaly" == "false" ]] && [[ -n "$ns_list" ]]; then
+            log_result "PASS" "DNS integrity check passed"
+        fi
+    fi
+    
+    # Check systemd-resolved status
+    if command -v resolvectl &>/dev/null; then
+        local dns_state=$(resolvectl status 2>/dev/null | grep -i "DNS Servers" | head -1)
+        if [[ -n "$dns_state" ]]; then
+            log_result "INFO" "systemd-resolved: $dns_state"
+        fi
+    fi
+    
+    if [[ "$dns_success" -ge 2 ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ============================================================
+# LAYER 8: HTTPS / TLS / ACTUAL BROWSING
+# ============================================================
+
+check_https() {
+    log "INFO" "=== LAYER 8: HTTPS & BROWSING ==="
+    local all_pass=true
+    local https_success=0
+    
+    if ! command -v curl &>/dev/null; then
+        log_result "WARN" "curl not installed - skipping HTTPS tests"
+        return 1
+    fi
+    
+    # Test captive portal detection
+    # HTTP 000 means connection failed, not a captive portal
+    # Only flag as captive portal when we get an actual HTTP redirect (2xx/3xx)
+    local portal_response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$CAPTIVE_PORTAL_TEST" 2>/dev/null)
+    if [[ "$portal_response" == "204" ]]; then
+        log_result "PASS" "No captive portal detected"
+    elif [[ "$portal_response" == "000" ]]; then
+        log_result "INFO" "Captive portal test: connection failed (no internet)"
+    elif [[ "$portal_response" =~ ^[23][0-9][0-9]$ ]]; then
+        log_result "WARN" "Captive portal detected (HTTP $portal_response)"
+        log_result "INFO" "You may need to log in to the network"
+        all_pass=false
+    else
+        log_result "WARN" "Captive portal test: unexpected response (HTTP $portal_response)"
+        all_pass=false
+    fi
+    
+    # Test HTTPS targets
+    for target in "${HTTPS_TARGETS[@]}"; do
+        local http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout "$CURL_TIMEOUT" --max-time 10 "$target" 2>/dev/null)
+        if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
+            log_result "PASS" "HTTPS: $target (HTTP $http_code)"
+            ((https_success++))
+        elif [[ "$http_code" == "000" ]]; then
+            log_result "WARN" "HTTPS: $target (connection failed)"
+            all_pass=false
+        else
+            log_result "WARN" "HTTPS: $target (HTTP $http_code)"
+            all_pass=false
+        fi
+    done
+    
+    # Skip MTU test if there's no internet (all HTTPS failed with 000)
+    if [[ "$https_success" -eq 0 ]]; then
+        log_result "INFO" "Skipping MTU test - no internet connectivity"
+    elif [[ "$https_success" -lt 2 ]] && [[ -n "$DEFAULT_GATEWAY" ]]; then
+        log_result "INFO" "Testing MTU..."
+        if ping -M do -s 1472 -c 1 "$DEFAULT_GATEWAY" &>/dev/null; then
+            log_result "PASS" "MTU: 1500 works"
+        else
+            log_result "WARN" "MTU issues detected - try reducing MTU to 1400"
+            all_pass=false
+        fi
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 9: NETWORKMANAGER
+# ============================================================
+
+check_networkmanager() {
+    log "INFO" "=== LAYER 9: NETWORKMANAGER ==="
+    local all_pass=true
+    
+    if ! command -v nmcli &>/dev/null; then
+        log_result "INFO" "NetworkManager not installed (using other network stack)"
+        return 0
+    fi
+    
+    # Check if NM is running
+    if systemctl is-active NetworkManager &>/dev/null; then
+        log_result "PASS" "NetworkManager is running"
+    else
+        log_result "FAIL" "NetworkManager is NOT running"
+        return 1
+    fi
+    
+    # Check NM state
+    local nm_state=$(nmcli -t -f GENERAL.STATE general status 2>/dev/null | cut -d: -f2)
+    if [[ -n "$nm_state" ]]; then
+        log_result "INFO" "NetworkManager state: $nm_state"
+        if [[ "$nm_state" == "connected" ]] || [[ "$nm_state" == "connecting" ]]; then
+            log_result "PASS" "NetworkManager has connection"
+        else
+            log_result "WARN" "NetworkManager state is '$nm_state'"
+            all_pass=false
+        fi
+    fi
+    
+    # Check device status (using process substitution to avoid subshell)
+    local connected_count=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ connected ]]; then
+            log_result "PASS" "$line"
+            ((connected_count++)) || true
+        fi
+    done < <(nmcli device status 2>/dev/null)
+    
+    # Check for stale connections - ROBUST VERSION
+    local stale_connections=0
+    local nm_output
+    nm_output=$(nmcli connection show --active 2>/dev/null || true)
+    if [[ -n "$nm_output" ]]; then
+        stale_connections=$(echo "$nm_output" | grep -c "stale" 2>/dev/null || echo "0")
+        # Ensure it's a clean number
+        stale_connections=$(echo "$stale_connections" | tr -d '[:space:]')
+        # Default to 0 if not a number
+        if ! [[ "$stale_connections" =~ ^[0-9]+$ ]]; then
+            stale_connections=0
+        fi
+    fi
+    
+    if [[ "$stale_connections" -gt 0 ]]; then
+        log_result "WARN" "Stale connections detected ($stale_connections)"
+        all_pass=false
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 10: VIRTUALIZATION (KVM/Libvirt)
+# ============================================================
+
+check_virtualization() {
+    log "INFO" "=== LAYER 10: VIRTUALIZATION ==="
+    
+    if [[ "$HAS_LIBVIRT" != "true" ]]; then
+        log_result "INFO" "No libvirt detected - skipping virtualization checks"
+        return 0
+    fi
+    
+    local all_pass=true
+    
+    # Check libvirtd
+    if systemctl is-active libvirtd &>/dev/null; then
+        log_result "PASS" "libvirtd is running"
+    else
+        log_result "WARN" "libvirtd is NOT running"
+        all_pass=false
+    fi
+    
+    # Check VMs
+    if command -v virsh &>/dev/null; then
+        local running_vms=$(virsh list --state-running --name 2>/dev/null | wc -l)
+        local defined_vms=$(virsh list --all --name 2>/dev/null | wc -l)
+        log_result "INFO" "VMs: $running_vms running / $defined_vms defined"
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+# ============================================================
+# LAYER 11: KUBERNETES (Optional)
+# ============================================================
+
+check_kubernetes() {
+    log "INFO" "=== LAYER 11: KUBERNETES ==="
+    
+    if [[ "$HAS_KUBECTL" != "true" ]]; then
+        log_result "INFO" "No kubectl detected - skipping Kubernetes checks"
+        return 0
+    fi
+    
+    # Check if kubeconfig exists
+    local kubeconfig="${KUBECONFIG:-$HOME/.kube/config}"
+    if [[ ! -f "$kubeconfig" ]]; then
+        log_result "INFO" "No kubeconfig found - skipping Kubernetes checks"
+        return 0
+    fi
+    
+    # Test cluster connectivity
+    if kubectl cluster-info --request-timeout=5s &>/dev/null; then
+        log_result "PASS" "Kubernetes API accessible"
+        
+        local nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready" || echo "0")
+        local total=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+        log_result "INFO" "Kubernetes: $nodes/$total nodes ready"
+    else
+        log_result "WARN" "Kubernetes API not accessible"
+        return 1
+    fi
+    
+    return 0
+}
+
+# ============================================================
+# REPAIR ENGINE - Layer-aware, static IP aware
+# ============================================================
+
+repair_network() {
+    log "INFO" "=== REPAIR ENGINE ==="
+    log "INFO" "Starting targeted repairs based on diagnostic results..."
+    local repair_success_count=0
+    local repair_attempt_count=0
+    local iface_to_repair="${BRIDGE_IFACE:-$DEFAULT_IFACE}"
+    
+    if [[ -z "$iface_to_repair" ]]; then
+        log_result "WARN" "No interface to repair - attempting to find one"
+        iface_to_repair=$(ip -br link show 2>/dev/null | grep -v lo | awk '{print $1}' | head -1)
+        if [[ -z "$iface_to_repair" ]]; then
+            log_result "FAIL" "No network interface found"
+            return 1
+        fi
+    fi
+    
+    local ip_method=$(detect_ip_method "$iface_to_repair")
+    
+    log "INFO" "IP method detected: $ip_method on $iface_to_repair"
+    
+    # Stage 1: DNS repairs (only if DNS failed)
+    if [[ ${LAYER_STATUS[dns]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 1: DNS repairs (DNS layer failed)"
+        ((repair_attempt_count++))
+        local dns_fixed=false
+        
+        if command -v resolvectl &>/dev/null; then
+            if resolvectl flush-caches 2>/dev/null; then
+                log_result "PASS" "DNS cache flushed (resolvectl)"
+                dns_fixed=true
+            fi
+        fi
+        if command -v systemd-resolve &>/dev/null; then
+            if systemd-resolve --flush-caches 2>/dev/null; then
+                log_result "PASS" "DNS cache flushed (systemd-resolve)"
+                dns_fixed=true
+            fi
+        fi
+        if command -v nscd &>/dev/null; then
+            if systemctl restart nscd 2>/dev/null; then
+                log_result "PASS" "nscd restarted"
+                dns_fixed=true
+            fi
+        fi
+        if systemctl restart systemd-resolved 2>/dev/null; then
+            log_result "PASS" "systemd-resolved restarted"
+            dns_fixed=true
+        fi
+        
+        if [[ "$dns_fixed" == "true" ]]; then
+            ((repair_success_count++))
+        else
+            log_result "WARN" "DNS repairs had no effect"
+        fi
+    else
+        log "INFO" "Stage 1: DNS OK - skipping DNS repairs"
+    fi
+    
+    # Stage 2: ARP cache (only if gateway or routing failed)
+    if [[ ${LAYER_STATUS[gateway]:-0} -ne 0 ]] || [[ ${LAYER_STATUS[routing]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 2: Flushing ARP cache (gateway/routing layer failed)"
+        ((repair_attempt_count++))
+        if ip neigh flush all 2>/dev/null; then
+            log_result "PASS" "ARP cache flushed"
+            ((repair_success_count++))
+        else
+            log_result "WARN" "Failed to flush ARP cache"
+        fi
+    else
+        log "INFO" "Stage 2: Gateway/Routing OK - skipping ARP flush"
+    fi
+    
+    # Stage 3: Interface reconnect (if physical or link layer failed)
+    if [[ ${LAYER_STATUS[physical]:-0} -ne 0 ]] || [[ ${LAYER_STATUS[link]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 3: Reconnecting interface (physical/link layer failed)"
+        ((repair_attempt_count++))
+        if command -v nmcli &>/dev/null; then
+            if nmcli device status 2>/dev/null | grep -q "$iface_to_repair"; then
+                nmcli device disconnect "$iface_to_repair" 2>/dev/null || true
+                sleep 1
+                if nmcli device connect "$iface_to_repair" 2>/dev/null; then
+                    log_result "PASS" "Interface $iface_to_repair reconnected"
+                    ((repair_success_count++))
+                else
+                    log_result "WARN" "Failed to reconnect $iface_to_repair"
+                fi
+                sleep 2
+            fi
+        fi
+    else
+        log "INFO" "Stage 3: Physical/Link OK - skipping interface reconnect"
+    fi
+    
+    # Stage 4: IP/DHCP repair (only if IP layer failed)
+    if [[ ${LAYER_STATUS[ip]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 4: IP repair (IP layer failed)"
+        ((repair_attempt_count++))
+        
+        if [[ "$ip_method" == "dhcp" ]]; then
+            log "INFO" "Renewing DHCP lease on $iface_to_repair"
+            if command -v dhclient &>/dev/null; then
+                dhclient -r "$iface_to_repair" 2>/dev/null || true
+                if dhclient "$iface_to_repair" 2>/dev/null; then
+                    log_result "PASS" "DHCP lease renewed on $iface_to_repair"
+                    ((repair_success_count++))
+                else
+                    log_result "WARN" "Failed to renew DHCP lease"
+                fi
+            fi
+        else
+            log "INFO" "Static IP detected - restarting connection instead"
+            if command -v nmcli &>/dev/null; then
+                local conn_name=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep ":${iface_to_repair}$" | cut -d: -f1)
+                if [[ -n "$conn_name" ]]; then
+                    nmcli con down "$conn_name" 2>/dev/null || true
+                    sleep 1
+                    if nmcli con up "$conn_name" 2>/dev/null; then
+                        log_result "PASS" "Static IP connection '$conn_name' restarted"
+                        ((repair_success_count++))
+                    else
+                        log_result "WARN" "Failed to restart connection '$conn_name'"
+                    fi
+                else
+                    log_result "WARN" "Could not find connection name for $iface_to_repair"
+                fi
+            fi
+        fi
+    else
+        log "INFO" "Stage 4: IP layer OK - skipping IP repair"
+    fi
+    
+    # Stage 5: NetworkManager restart (if NM layer failed)
+    if [[ ${LAYER_STATUS[nm]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 5: Restarting NetworkManager (NM layer failed)"
+        ((repair_attempt_count++))
+        if systemctl restart NetworkManager 2>/dev/null; then
+            log_result "PASS" "NetworkManager restarted"
+            ((repair_success_count++))
+            sleep 3
+        else
+            log_result "WARN" "Failed to restart NetworkManager"
+        fi
+    else
+        log "INFO" "Stage 5: NetworkManager OK - skipping NM restart"
+    fi
+    
+    # Stage 6: Resolver restart (if DNS failed and not already done)
+    if [[ ${LAYER_STATUS[dns]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 6: Restarting resolver (DNS layer failed)"
+        ((repair_attempt_count++))
+        if systemctl restart systemd-resolved 2>/dev/null; then
+            log_result "PASS" "systemd-resolved restarted"
+            ((repair_success_count++))
+        fi
+    fi
+    
+    # Stage 7: Bridge recovery (if bridge issues detected)
+    if [[ -n "$BRIDGE_IFACE" ]] && [[ ${LAYER_STATUS[link]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 7: Bridge recovery (link layer failed)"
+        ((repair_attempt_count++))
+        if nmcli con up "$BRIDGE_IFACE" 2>/dev/null; then
+            log_result "PASS" "Bridge $BRIDGE_IFACE brought up"
+            ((repair_success_count++))
+            
+            # Re-enslave interface if needed
+            if ! bridge link show 2>/dev/null | grep -q "$iface_to_repair"; then
+                log "INFO" "Re-enslaving $iface_to_repair to $BRIDGE_IFACE"
+                if ip link set "$iface_to_repair" master "$BRIDGE_IFACE" 2>/dev/null; then
+                    log_result "PASS" "$iface_to_repair re-enslaved to $BRIDGE_IFACE"
+                else
+                    log_result "WARN" "Failed to re-enslave $iface_to_repair"
+                fi
+            fi
+        else
+            log_result "WARN" "Failed to bring up bridge $BRIDGE_IFACE"
+        fi
+    fi
+    
+    # Stage 8: DNS fallback (last resort, only if DNS still broken)
+    if [[ ${LAYER_STATUS[dns]:-0} -ne 0 ]]; then
+        log "INFO" "Stage 8: DNS fallback configuration"
+        if [[ ! -f /etc/resolv.conf ]]; then
+            echo "nameserver 1.1.1.1" > /etc/resolv.conf
+            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+            log_result "PASS" "Fallback DNS configured (new resolv.conf)"
+            ((repair_success_count++))
+            ((repair_attempt_count++))
+        elif [[ -L /etc/resolv.conf ]]; then
+            log_result "INFO" "resolv.conf is a symlink (managed by resolver) - not modifying"
+        elif ! grep -q "^nameserver" /etc/resolv.conf; then
+            echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+            log_result "PASS" "Fallback DNS added to resolv.conf"
+            ((repair_success_count++))
+            ((repair_attempt_count++))
+        else
+            log_result "INFO" "resolv.conf already has nameservers - skipping"
+        fi
+    fi
+    
+    # Report results
+    if [[ "$repair_success_count" -gt 0 ]]; then
+        log_result "PASS" "Repairs completed: $repair_success_count/$repair_attempt_count succeeded"
+        return 0
+    elif [[ "$repair_attempt_count" -eq 0 ]]; then
+        log_result "INFO" "No repairs needed - all layers healthy"
+        return 0
+    else
+        log_result "FAIL" "No repairs succeeded (0/$repair_attempt_count)"
+        return 1
+    fi
+}
+
+# ============================================================
+# REPORT GENERATION
+# ============================================================
+
+generate_report() {
+    local results_file="$1"
+    echo ""
+    echo "=========================================="
+    echo "    NETWORK RECOVERY REPORT"
+    echo "=========================================="
+    echo "Time: $(date)"
+    echo "Host: $(hostname)"
+    echo "Interface: $DEFAULT_IFACE"
+    [[ -n "$BRIDGE_IFACE" ]] && echo "Bridge: $BRIDGE_IFACE"
+    [[ -n "$DEFAULT_GATEWAY" ]] && echo "Gateway: $DEFAULT_GATEWAY"
+    echo "------------------------------------------"
+    cat "$results_file"
+    echo "=========================================="
+    echo "Full report saved to: $results_file"
+    echo "Snapshots saved to: $SNAPSHOT_DIR"
+    echo "=========================================="
+}
+
+# ============================================================
+# STATUS COMMAND (Quick health check)
+# ============================================================
+
+cmd_status() {
+    echo "=========================================="
+    echo "    NETWORK STATUS"
+    echo "=========================================="
+    echo "Time: $(date)"
+    echo "Host: $(hostname)"
+    echo "------------------------------------------"
+    echo "Interface: $DEFAULT_IFACE"
+    
+    # Fix IP detection - use bridge if available, fallback to default
+    local ip_addr=$(ip -4 addr show "${BRIDGE_IFACE}" 2>/dev/null | grep -oP 'inet\s+\K[0-9.]+' | head -1)
+    if [[ -z "$ip_addr" ]]; then
+        ip_addr=$(ip -4 addr show "${DEFAULT_IFACE}" 2>/dev/null | grep -oP 'inet\s+\K[0-9.]+' | head -1 || echo "None")
+    fi
+    echo "IP: $ip_addr"
+    
+    echo "Gateway: ${DEFAULT_GATEWAY:-'None'}"
+    echo "Bridge: ${BRIDGE_IFACE:-None}"
+    echo "------------------------------------------"
+    
+    if ping -c 1 -W 1 8.8.8.8 &>/dev/null; then
+        echo "Internet: ✅ Connected"
+    else
+        echo "Internet: ❌ Unreachable"
+    fi
+    
+    if nslookup google.com &>/dev/null 2>&1; then
+        echo "DNS:      ✅ Working"
+    else
+        echo "DNS:      ❌ Failed"
+    fi
+    
+    if systemctl is-active NetworkManager &>/dev/null; then
+        local nm_state=$(nmcli -t -f GENERAL.STATE general status 2>/dev/null | cut -d: -f2)
+        echo "NM:       ✅ Running (${nm_state:-unknown})"
+    else
+        echo "NM:       ❌ Stopped"
+    fi
+    
+    if [[ "$HAS_LIBVIRT" == "true" ]]; then
+        if systemctl is-active libvirtd &>/dev/null; then
+            local vm_count=$(virsh list --state-running --name 2>/dev/null | wc -l)
+            echo "VMs:      ✅ $vm_count running"
+        else
+            echo "VMs:      ❌ libvirtd stopped"
+        fi
+    fi
+    
+    echo "=========================================="
+}
+
+# ============================================================
+# MAIN COMMANDS
+# ============================================================
+
+cmd_diagnose() {
+    log "INFO" "=== NETWORK DIAGNOSTIC STARTED ==="
+    local TIMESTAMP=$(generate_timestamp)
+    local results_file="$LOG_DIR/diagnostic-${TIMESTAMP}.log"
+    {
+        check_physical 2>&1 || true
+        check_link_layer 2>&1 || true
+        check_ip_layer 2>&1 || true
+        check_routing 2>&1 || true
+        check_gateway 2>&1 || true
+        check_internet 2>&1 || true
+        check_dns 2>&1 || true
+        check_https 2>&1 || true
+        check_networkmanager 2>&1 || true
+        check_virtualization 2>&1 || true
+        check_kubernetes 2>&1 || true
+    } | tee -a "$results_file"
+    generate_report "$results_file"
+}
+
+cmd_repair() {
+    log "INFO" "=== NETWORK RECOVERY STARTED ==="
+    local TIMESTAMP=$(generate_timestamp)
+
+    local snapshot_file=$(save_snapshot)
+    log "INFO" "Pre-repair snapshot: $snapshot_file"
+
+    local results_file="$LOG_DIR/recovery-${TIMESTAMP}.log"
+    local diag_output
+    diag_output=$(mktemp)
+    trap "rm -f '$diag_output'" EXIT
+
+    declare -gA LAYER_STATUS
+
+    # Run each check individually to avoid subshell issues
+    run_check() {
+        local layer="$1"
+        shift
+        local tmp_file=$(mktemp)
+        "$@" > "$tmp_file" 2>&1
+        local result=$?
+        LAYER_STATUS["$layer"]=$result
+        cat "$tmp_file" | tee -a "$diag_output"
+        rm -f "$tmp_file"
+        return $result
+    }
+
+    run_check physical check_physical || true
+    run_check link check_link_layer || true
+    run_check ip check_ip_layer || true
+    run_check routing check_routing || true
+    run_check gateway check_gateway || true
+    run_check internet check_internet || true
+    run_check dns check_dns || true
+    run_check https check_https || true
+    run_check nm check_networkmanager || true
+    run_check virt check_virtualization || true
+    run_check k8s check_kubernetes || true
+
+    echo ""
+    echo "=========================================="
+    echo "    ATTEMPTING REPAIRS"
+    echo "=========================================="
+
+    repair_network
+    local repair_result=$?
+
+    echo ""
+    echo "=========================================="
+    echo "    VERIFYING REPAIRS"
+    echo "=========================================="
+    sleep 3
+
+    echo -e "\n=== POST-REPAIR VERIFICATION ==="
+    check_internet || true
+    check_dns || true
+    check_https || true
+
+    cat "$diag_output" | tee -a "$results_file"
+    generate_report "$results_file"
+
+    return $repair_result
+}
+
+cmd_snapshot() {
+    local snapshot_file=$(save_snapshot)
+    echo "✅ Snapshot saved to: $snapshot_file"
+    echo ""
+    echo "Quick summary:"
+    echo "  Interface: $DEFAULT_IFACE"
+    echo "  Gateway: ${DEFAULT_GATEWAY:-'None'}"
+    echo "  Bridge: ${BRIDGE_IFACE:-'None'}"
+    echo "  IP: $(ip -4 addr show "${BRIDGE_IFACE:-$DEFAULT_IFACE}" 2>/dev/null | grep -oP 'inet\s\K\d+(\.\d+){3}' | head -1 || echo 'None')"
+}
+
+cmd_watch() {
+    echo "🔍 Monitoring network health (Ctrl+C to stop)"
+    echo ""
+    while true; do
+        clear
+        echo "=== NETWORK HEALTH MONITOR ==="
+        echo "Time: $(date)"
+        echo ""
+        
+        # IP connectivity
+        if ping -c 1 -W 1 8.8.8.8 &>/dev/null; then
+            echo "  ✅ Internet: OK"
+        else
+            echo "  ❌ Internet: DOWN"
+        fi
+        
+        # DNS
+        if nslookup google.com &>/dev/null; then
+            echo "  ✅ DNS: OK"
+        else
+            echo "  ❌ DNS: FAILED"
+        fi
+        
+        # Gateway
+        if [[ -n "$DEFAULT_GATEWAY" ]] && ping -c 1 -W 1 "$DEFAULT_GATEWAY" &>/dev/null; then
+            echo "  ✅ Gateway: $DEFAULT_GATEWAY (reachable)"
+        else
+            echo "  ❌ Gateway: ${DEFAULT_GATEWAY:-'None'} (unreachable)"
+        fi
+        
+        # Interface
+        if [[ -n "$DEFAULT_IFACE" ]] && ip link show "$DEFAULT_IFACE" 2>/dev/null | grep -q "UP"; then
+            echo "  ✅ Interface: $DEFAULT_IFACE (UP)"
+        else
+            echo "  ❌ Interface: ${DEFAULT_IFACE:-'None'} (DOWN)"
+        fi
+        
+        echo ""
+        echo "Press Ctrl+C to stop"
+        sleep 2
+    done
+}
+
+# ============================================================
+# USAGE
+# ============================================================
+
+show_usage() {
+    cat << EOF
+Linux Network Recovery Engine v$VERSION
+
+Usage:
+    $SCRIPT_NAME diagnose   - Run full diagnostic (no changes)
+    $SCRIPT_NAME repair     - Diagnose and attempt repairs
+    $SCRIPT_NAME status     - Quick network health check
+    $SCRIPT_NAME snapshot   - Save current network state
+    $SCRIPT_NAME watch      - Monitor network health in real-time
+    $SCRIPT_NAME help       - Show this help message
+
+Examples:
+    sudo network-recover diagnose
+    sudo network-recover repair
+    sudo network-recover status
+
+Supported Distributions:
+    Debian, Ubuntu, Fedora, Arch, MX Linux, RHEL, and derivatives
+
+Features:
+    ✅ Physical layer (carrier, link state)
+    ✅ IP layer (IPv4, IPv6, duplicate IP detection)
+    ✅ Routing (default routes, metrics, blackholes)
+    ✅ Gateway (ARP, reachability)
+    ✅ Internet (multiple targets, ICMP + TCP)
+    ✅ DNS (resolution, poisoning detection, multiple servers)
+    ✅ HTTPS/TLS (actual browsing simulation)
+    ✅ NetworkManager (state, device status, stale connections)
+    ✅ Virtualization (KVM/Libvirt, bridges, vnets)
+    ✅ Kubernetes (optional, cluster connectivity)
+    ✅ Captive portal detection
+    ✅ MTU analysis
+    ✅ ARP cache management
+    ✅ Pre-repair snapshots
+
+Report Issues: https://github.com/cypso05/Linux_Network-Recovery-Tool
+EOF
+}
+
+# ============================================================
+# MAIN
+# ============================================================
+
+main() {
+    # Check for root privileges
+    if [[ $EUID -ne 0 ]] && [[ "${1:-}" != "help" ]]; then
+        echo "❌ This script must be run as root (sudo)"
+        echo "   Usage: sudo $SCRIPT_NAME ${1:-diagnose}"
+        exit 1
+    fi
+    
+    case "${1:-diagnose}" in
+        diagnose|diag)
+            cmd_diagnose
+            ;;
+        repair|fix)
+            cmd_repair
+            ;;
+        status|stat)
+            cmd_status
+            ;;
+        snapshot|snap)
+            cmd_snapshot
+            ;;
+        watch|monitor)
+            cmd_watch
+            ;;
+        help|--help|-h)
+            show_usage
+            ;;
+        *)
+            echo "❌ Unknown command: ${1:-}"
+            echo ""
+            show_usage
+            exit 1
+            ;;
+    esac
+}
+
+# ============================================================
+# RUN
+# ============================================================
+
+main "$@"

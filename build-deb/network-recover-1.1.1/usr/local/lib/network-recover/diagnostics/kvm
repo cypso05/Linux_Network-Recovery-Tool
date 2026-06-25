@@ -1,0 +1,17 @@
+#!/bin/bash
+check_kvm() {
+    if ! command -v virsh &>/dev/null; then
+        echo "  ℹ️  libvirt not installed"
+        return 0
+    fi
+    
+    if systemctl is-active libvirtd &>/dev/null; then
+        local running=$(virsh list --state-running --name 2>/dev/null | wc -l)
+        local total=$(virsh list --all --name 2>/dev/null | wc -l)
+        echo "  ✅ libvirtd running - $running/$total VMs active"
+        return 0
+    else
+        echo "  ⚠️  libvirtd not running"
+        return 1
+    fi
+}

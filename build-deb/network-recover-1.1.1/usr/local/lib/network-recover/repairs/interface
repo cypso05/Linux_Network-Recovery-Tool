@@ -1,0 +1,32 @@
+#!/bin/bash
+# repairs/interface - interface repair action
+# Usage: repair_interface [iface]
+
+repair_interface() {
+    local iface="${1:-$DEFAULT_IFACE}"
+    echo "🔧 Repairing interface $iface..."
+    
+    if ! command -v nmcli &>/dev/null; then
+        echo "  ❌ nmcli not available"
+        return 1
+    fi
+    
+    nmcli device disconnect "$iface" 2>/dev/null
+    sleep 1
+    
+    if nmcli device connect "$iface" 2>/dev/null; then
+        echo "  ✅ Interface $iface reconnected"
+        sleep 2
+        # Verify
+        if ip link show "$iface" 2>/dev/null | grep -q "UP"; then
+            echo "  ✅ Interface is UP"
+            return 0
+        else
+            echo "  ⚠️  Interface reconnected but still DOWN"
+            return 1
+        fi
+    else
+        echo "  ❌ Failed to reconnect $iface"
+        return 1
+    fi
+}

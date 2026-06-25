@@ -1,0 +1,17 @@
+#!/bin/bash
+check_gateway() {
+    local gateway="${1:-$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)}"
+    
+    if [[ -z "$gateway" ]]; then
+        echo "  ❌ No gateway configured"
+        return 1
+    fi
+    
+    if ping -c 1 -W 2 "$gateway" &>/dev/null; then
+        echo "  ✅ Gateway $gateway reachable"
+        return 0
+    else
+        echo "  ❌ Gateway $gateway unreachable"
+        return 1
+    fi
+}
