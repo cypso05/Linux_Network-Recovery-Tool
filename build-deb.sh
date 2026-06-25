@@ -173,7 +173,7 @@ Section: admin
 Priority: optional
 Architecture: all
 Maintainer: $MAINTAINER
-Depends: bash (>= 4.0), iproute2, curl, nmcli, dnsutils, policykit-1
+Depends: bash (>= 4.0), iproute2, curl, network-manager, dnsutils, policykit-1
 Recommends: network-manager, libvirt-clients, kubectl
 Description: $DESCRIPTION
  .
