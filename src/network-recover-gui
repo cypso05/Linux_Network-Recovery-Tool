@@ -1,10 +1,10 @@
-﻿#!/bin/bash
+#!/bin/bash
 #===============================================================================
-# Network Recovery Tool - Professional GUI v2.0.0
-# 5 dedicated displays with real-time progress tracking
+# Linux Network Recovery Tool - Professional GUI v2.0.0
+# 6 dedicated displays with real-time progress tracking + Web UI launcher
 #===============================================================================
 
-readonly APP_NAME="Linux Network Recovery Pro"
+readonly APP_NAME="Linux Network Recovery Tool"
 readonly APP_VERSION="2.0.0"
 readonly APP_ICON="network-wireless"
 readonly MAIN_WIDTH=500
@@ -20,22 +20,22 @@ run_with_progress() {
     local log_file="$3"
     shift 3
     local cmd=("$@")
-    
+
     # Start command in background
     "${cmd[@]}" > "$log_file" 2>&1 &
     local pid=$!
-    
+
     # Track progress from log output
     (
         local progress=0
         echo "0" ; echo "# $subtitle..."
-        
+
         while kill -0 $pid 2>/dev/null; do
             if [[ ! -f "$log_file" ]]; then
                 sleep 0.5
                 continue
             fi
-            
+
             # Map log markers to progress percentages
             [[ $progress -lt 10 ]] && grep -q "LAYER 1:" "$log_file" 2>/dev/null && { progress=10; echo "$progress"; echo "# Checking physical layer..."; }
             [[ $progress -lt 20 ]] && grep -q "LAYER 2:" "$log_file" 2>/dev/null && { progress=20; echo "$progress"; echo "# Checking link layer..."; }
@@ -47,10 +47,10 @@ run_with_progress() {
             [[ $progress -lt 80 ]] && grep -q "LAYER 8:" "$log_file" 2>/dev/null && { progress=80; echo "$progress"; echo "# Testing HTTPS..."; }
             [[ $progress -lt 90 ]] && grep -q "REPAIR ENGINE" "$log_file" 2>/dev/null && { progress=90; echo "$progress"; echo "# Running repairs..."; }
             [[ $progress -lt 100 ]] && grep -q "POST-REPAIR" "$log_file" 2>/dev/null && { progress=95; echo "$progress"; echo "# Verifying..."; }
-            
+
             sleep 0.3
         done
-        
+
         wait $pid
         echo "100" ; echo "# Complete!"
         sleep 0.5
@@ -62,7 +62,7 @@ run_with_progress() {
         --width=450 \
         --no-cancel \
         2>/dev/null
-    
+
     return ${PIPESTATUS[0]}
 }
 
@@ -73,7 +73,7 @@ show_results() {
     local title="$1"
     local log_file="$2"
     local success="$3"
-    
+
     if [[ "$success" == "true" ]]; then
         zenity --info \
             --title="$title" \
@@ -87,7 +87,7 @@ show_results() {
             --width=400 \
             2>/dev/null
     fi
-    
+
     if [[ -f "$log_file" ]]; then
         zenity --text-info \
             --title="$title — Full Report" \
@@ -96,7 +96,7 @@ show_results() {
             --filename="$log_file" \
             --checkbox="Save report to Desktop" \
             2>/dev/null
-        
+
         if [[ $? -eq 0 ]]; then
             local desktop_file="$HOME/Desktop/network-report-$(date +%Y%m%d-%H%M%S).txt"
             cp "$log_file" "$desktop_file"
@@ -108,20 +108,55 @@ show_results() {
 }
 
 #===============================================================================
-# DISPLAY 1: Diagnose Network
+# DISPLAY 1: Web UI Launcher
+#===============================================================================
+show_web_ui() {
+    # Check if server is running
+    if ! pgrep -f "python3.*server.py" > /dev/null 2>&1; then
+        zenity --question \
+            --title="$APP_NAME — Web UI" \
+            --text="The web server is not running.\n\nStart it now?" \
+            --width=400 \
+            2>/dev/null || return
+
+        # Start the server
+        if systemctl is-active network-recover-web &>/dev/null; then
+            sudo systemctl start network-recover-web
+        else
+            sudo /usr/local/bin/network-recover-web &
+        fi
+        sleep 2
+    fi
+
+    # Get the IP
+    local ip=$(hostname -I | awk '{print $1}')
+    local url="http://${ip}:9876"
+
+    # Show info and open browser
+    zenity --info \
+        --title="$APP_NAME — Web UI" \
+        --text="🌐 Web UI is available at:\n\n$url\n\nOpening in your browser..." \
+        --width=450 \
+        2>/dev/null
+
+    xdg-open "$url" 2>/dev/null || sensible-browser "$url" 2>/dev/null || firefox "$url" 2>/dev/null
+}
+
+#===============================================================================
+# DISPLAY 2: Diagnose Network
 #===============================================================================
 show_diagnose() {
     local log_file="/tmp/network-diagnose-$(date +%Y%m%d-%H%M%S).log"
-    
+
     run_with_progress "$APP_NAME — Diagnose" "Starting network diagnosis" "$log_file" \
         sudo network-recover diagnose
-    
+
     local exit_code=$?
     show_results "Network Diagnosis" "$log_file" "$([[ $exit_code -eq 0 ]] && echo "true" || echo "false")"
 }
 
 #===============================================================================
-# DISPLAY 2: Repair Network (FIXED)
+# DISPLAY 3: Repair Network
 #===============================================================================
 show_repair() {
     # Safety warning before repair
@@ -132,12 +167,12 @@ show_repair() {
         --ok-label="Repair Now" \
         --cancel-label="Cancel" \
         2>/dev/null || return
-    
+
     local log_file="/tmp/network-repair-$(date +%Y%m%d-%H%M%S).log"
-    
+
     run_with_progress "$APP_NAME — Repair" "Repairing network" "$log_file" \
         sudo network-recover repair
-    
+
     # Determine success by checking log for actual repair outcome
     if grep -q "✅" "$log_file" 2>/dev/null && ! grep -q "❌" "$log_file" 2>/dev/null; then
         local success="true"
@@ -150,17 +185,17 @@ show_repair() {
             notify-send -u critical -t 10000 "$APP_NAME" "⚠️ Some issues remain" --icon=dialog-error 2>/dev/null
         fi
     fi
-    
+
     show_results "Network Repair" "$log_file" "$success"
 }
 
 #===============================================================================
-# DISPLAY 3: Network Status
+# DISPLAY 4: Network Status
 #===============================================================================
 show_status() {
     local output
     output=$(sudo network-recover status 2>&1)
-    
+
     # Parse with safe defaults
     local interface=$(echo "$output" | grep "Interface:" | awk '{print $2}' || echo "N/A")
     local ip=$(echo "$output" | grep "IP:" | awk '{print $2}' || echo "N/A")
@@ -170,7 +205,7 @@ show_status() {
     local dns=$(echo "$output" | grep "DNS:" | awk '{print $2}' || echo "Unknown")
     local nm=$(echo "$output" | grep "NM:" | awk '{print $2}' || echo "Unknown")
     local vms=$(echo "$output" | grep "VMs:" | awk '{print $2}' || echo "N/A")
-    
+
     # Map status to icons
     local internet_icon="❌"
     local dns_icon="❌"
@@ -178,7 +213,7 @@ show_status() {
     [[ "$internet" == "✅" ]] && internet_icon="✅"
     [[ "$dns" == "✅" ]] && dns_icon="✅"
     [[ "$nm" == "✅" ]] && nm_icon="✅"
-    
+
     zenity --list \
         --title="$APP_NAME — Status" \
         --text="Network Health Overview" \
@@ -196,7 +231,7 @@ show_status() {
         "⚙️  NetworkManager" "$nm_icon Running" "" \
         "💻 Virtual Machines" "" "$vms running" \
         2>/dev/null
-    
+
     # Offer detailed view
     zenity --question \
         --title="$APP_NAME — Status" \
@@ -210,11 +245,11 @@ show_status() {
 }
 
 #===============================================================================
-# DISPLAY 4: Save Snapshot
+# DISPLAY 5: Save Snapshot
 #===============================================================================
 show_snapshot() {
     local log_file="/tmp/network-snapshot-$(date +%Y%m%d-%H%M%S).log"
-    
+
     (
         echo "25" ; echo "# Capturing network state..."
         sudo network-recover snapshot > "$log_file" 2>&1
@@ -229,9 +264,9 @@ show_snapshot() {
         --width=400 \
         --no-cancel \
         2>/dev/null
-    
+
     local snapshot_path=$(grep -oP '/var/lib/network-recover/snapshots/[^ ]+' "$log_file" 2>/dev/null || echo "unknown")
-    
+
     zenity --info \
         --title="$APP_NAME — Snapshot Saved" \
         --text="✅ Network snapshot saved successfully!\n\n📍 Location: $snapshot_path\n\nUse this snapshot to compare network state before and after changes." \
@@ -240,7 +275,7 @@ show_snapshot() {
 }
 
 #===============================================================================
-# DISPLAY 5: Monitor Network
+# DISPLAY 6: Monitor Network
 #===============================================================================
 show_watch() {
     # Detect available terminal
@@ -251,7 +286,7 @@ show_watch() {
             break
         fi
     done
-    
+
     if [[ -z "$terminal" ]]; then
         zenity --error \
             --title="$APP_NAME — Error" \
@@ -260,14 +295,14 @@ show_watch() {
             2>/dev/null
         return
     fi
-    
+
     zenity --info \
         --title="$APP_NAME — Monitor" \
         --text="📡 Starting real-time network monitor\n\nDisplays: Internet • DNS • Gateway • Interface\n\nPress Ctrl+C in the terminal window to stop monitoring." \
         --width=450 \
         --ok-label="Start Monitor" \
         2>/dev/null
-    
+
     $terminal -T "Network Monitor — $APP_NAME" -e "sudo network-recover watch" &
 }
 
@@ -278,11 +313,12 @@ show_main_menu() {
     zenity --list \
         --title="$APP_NAME v$APP_VERSION" \
         --text="Select an action:" \
-        --width=500 \
-        --height=380 \
+        --width=550 \
+        --height=420 \
         --column="Action" \
         --column="Description" \
         --column="Impact" \
+        "🌐  Web UI" "Open web interface in browser" "🟢 Safe" \
         "🔍  Diagnose" "Full 11-layer diagnostic — no changes" "🟢 Safe" \
         "🔧  Repair" "Diagnose + intelligent repair" "🟡 May disrupt" \
         "📊  Status" "Quick network health overview" "🟢 Safe" \
@@ -298,6 +334,7 @@ show_main_menu() {
 # Handle direct command-line arguments (for .desktop file integration)
 if [[ -n "${1:-}" ]]; then
     case "$1" in
+        web|ui)          show_web_ui; exit $? ;;
         diagnose|diag)   show_diagnose; exit $? ;;
         repair|fix)      show_repair; exit $? ;;
         status|stat)     show_status; exit $? ;;
@@ -312,6 +349,7 @@ choice=$(show_main_menu)
 [[ -z "$choice" ]] && exit 0
 
 case "$choice" in
+    *Web*)       show_web_ui ;;
     *Diagnose*)  show_diagnose ;;
     *Repair*)    show_repair ;;
     *Status*)    show_status ;;
