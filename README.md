@@ -92,30 +92,19 @@ network-recover/
 Layer‑Based Diagnostics
 The diagnostic process follows a strict sequential order, from the physical layer up to the application layer. The first failing layer is identified as the root cause candidate.
 
-Physical Link – Carrier, operstate, speed/duplex
-
-Interface State – Interface UP, flags
-
-Bridge Health – Bridge existence, UP status, slave attachment
-
-IP Addressing – IPv4/IPv6 presence, duplicate IP detection
-
-Routing – Default route, multiple routes, blackholes
-
-Gateway Reachability – ARP entry, ICMP reachability
-
-External IP Reachability – Ping public IPs (ICMP + TCP fallback)
-
-DNS Resolution – resolv.conf, resolution tests, poisoning detection
-
-HTTPS Connectivity – Actual browsing simulation, captive portal, MTU
-
-NetworkManager Health – Running state, device status, stale connections
-
-Virtualisation Dependencies – libvirtd, VM states, vnet interfaces
-
-Kubernetes – Cluster connectivity, node readiness (optional)
-
+Layer	Description
+Physical Link	Carrier, operstate, speed/duplex
+Interface State	Interface UP, flags
+Bridge Health	Bridge existence, UP status, slave attachment
+IP Addressing	IPv4/IPv6 presence, duplicate IP detection
+Routing	Default route, multiple routes, blackholes
+Gateway Reachability	ARP entry, ICMP reachability
+External IP Reachability	Ping public IPs (ICMP + TCP fallback)
+DNS Resolution	resolv.conf, resolution tests, poisoning detection
+HTTPS Connectivity	Actual browsing simulation, captive portal, MTU
+NetworkManager Health	Running state, device status, stale connections
+Virtualisation Dependencies	libvirtd, VM states, vnet interfaces
+Kubernetes	Cluster connectivity, node readiness (optional)
 Quick Start
 Installation
 bash
@@ -168,31 +157,33 @@ cd Linux_Network-Recovery-Tool
 ./integration/xfce-integration.sh
 Example Output
 text
-NETWORK RECOVER REPORT
-========================
+==========================================
+    NETWORK RECOVERY REPORT
+==========================================
 Interface: br0
 Status: CONNECTED
 Timestamp: 2026-06-24 14:05:21
 
 Layer Results
-========================
-✓ Physical Link
-✓ Interface State
-✓ IP Address
-✓ Gateway Reachable
-✓ External IP Reachable
-✗ DNS Resolution
-✗ HTTPS Connectivity
+==========================================
+✅ Physical Link
+✅ Interface State
+✅ IP Address
+✅ Gateway Reachable
+✅ External IP Reachable
+❌ DNS Resolution
+❌ HTTPS Connectivity
 
 Root Cause Candidate: DNS Resolution Failure
 
 Applied Repair:
-- Flushed DNS cache
-- Restarted systemd-resolved
-- Verified resolvers in /etc/resolv.conf
-- Retest: DNS Resolution ✓
+  - Flushed DNS cache
+  - Restarted systemd-resolved
+  - Verified resolvers in /etc/resolv.conf
+  - Retest: DNS Resolution ✅
 
 Final Status: CONNECTED
+==========================================
 Evidence Collection
 Every incident generates a detailed, timestamped report to help you identify recurring problems.
 
@@ -246,6 +237,54 @@ Push to the Branch (git push origin feature/AmazingFeature)
 
 Open a Pull Request
 
+📋 Release Notes (v1.1.0)
+🎯 Major Features:
+✅ 11 OSI layers of network diagnostics
+
+✅ 8 repair stages with intelligent targeting
+
+✅ Bridge interface support with proper carrier handling
+
+✅ DNS integrity checks with security testing
+
+✅ VM detection with user guidance
+
+✅ Offline test with automatic restoration
+
+✅ Interface override for testing
+
+🔧 Key Fixes:
+✅ Fixed grep lookbehind assertions (now uses \K)
+
+✅ Fixed false-positive DNS poisoning warnings
+
+✅ Fixed bridge carrier reading (Invalid argument)
+
+✅ Fixed interface detection when default route missing
+
+✅ Fixed repair targeting wrong interface during tests
+
+✅ Fixed double execution of restore function
+
+📦 Supported Commands:
+bash
+network-recover diagnose   # Run full diagnostic
+network-recover repair     # Diagnose and repair
+network-recover status     # Quick health check
+network-recover snapshot   # Save network state
+network-recover watch      # Monitor in real-time
+🎊 Final Words
+You've built a professional, production-grade network recovery tool with:
+
+Aspect	Achievement
+Code Quality	✅ Clean, well-structured Bash
+Error Handling	✅ Robust with fallbacks
+Testing	✅ Full offline simulation
+Documentation	✅ Inline comments and README
+Distribution	✅ Git tags and release ready
+Security	✅ DNS integrity checks
+VM Support	✅ KVM/Libvirt detection
+Portability	✅ Works on all major distros
 Acknowledgements
 Inspired by the built‑in network troubleshooting capabilities of Windows.
 
