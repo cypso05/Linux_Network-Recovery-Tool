@@ -1,10 +1,10 @@
-#!/bin/bash
+﻿#!/bin/bash
 #===============================================================================
 # Network Recovery Tool - Professional GUI v2.0.0
 # 5 dedicated displays with real-time progress tracking
 #===============================================================================
 
-readonly APP_NAME="Network Recovery Pro"
+readonly APP_NAME="Linux Network Recovery Pro"
 readonly APP_VERSION="2.0.0"
 readonly APP_ICON="network-wireless"
 readonly MAIN_WIDTH=500
