@@ -131,6 +131,15 @@ if command -v nmcli &>/dev/null; then
     fi
 fi
 
+# Detect if VMs are running on this bridge (informational only)
+VM_COUNT=0
+if [[ "$IFACE_TYPE" == "bridge" ]] && command -v virsh &>/dev/null; then
+    VM_COUNT=$(virsh list --state-running --name 2>/dev/null | wc -l)
+    if [[ "$VM_COUNT" -gt 0 ]]; then
+        echo "  ℹ️  $VM_COUNT VM(s) detected on this bridge"
+    fi
+fi
+
 # Test connectivity before disabling
 echo ""
 echo "📌 Testing connectivity before disabling..."
@@ -178,8 +187,17 @@ echo "  RUNNING NETWORK RECOVERY"
 echo "=============================================="
 echo ""
 
+# Guard to prevent restore_network from running twice
+RESTORE_DONE=false
+
 # Function to restore network regardless of repair outcome
 restore_network() {
+    # Prevent double execution
+    if [[ "$RESTORE_DONE" == "true" ]]; then
+        return 0
+    fi
+    RESTORE_DONE=true
+    
     echo ""
     echo "=============================================="
     echo "  RESTORING NETWORK"
@@ -211,17 +229,82 @@ restore_network() {
         fi
     fi
     
-    # Extra wait for bridge interfaces (VM networking may need more time)
-    if [[ "$IFACE_TYPE" == "bridge" ]]; then
-        echo "  ⏳ Bridge detected - waiting longer for VM networking..."
-        sleep 10
+    # Brief wait for bridge to stabilize (just a moment, not minutes)
+    echo "  ⏳ Waiting for bridge to stabilize..."
+    sleep 2
+    
+    # Show network status
+    echo ""
+    echo "📌 Network Status:"
+    
+    # Check interface
+    if ip link show "$IFACE" | grep -q "UP"; then
+        echo "  ✅ $IFACE is UP"
     else
-        echo "  ⏳ Waiting for network to stabilize..."
-        sleep 5
+        echo "  ❌ $IFACE is DOWN"
     fi
+    
+    # Check IP
+    BRIDGE_IP=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1)
+    if [[ -n "$BRIDGE_IP" ]]; then
+        echo "  ✅ IP: $BRIDGE_IP"
+    else
+        echo "  ❌ No IP assigned"
+    fi
+    
+    # Check internet
+    if ping -c 1 -W 2 8.8.8.8 &>/dev/null; then
+        echo "  ✅ Internet connectivity restored"
+        INTERNET_RESTORED=true
+    else
+        echo "  ⏳ Internet connectivity pending (may take a moment)"
+        INTERNET_RESTORED=false
+    fi
+    
+    # Generic VM info (if any VMs exist)
+    if [[ "$IFACE_TYPE" == "bridge" ]] && command -v virsh &>/dev/null; then
+        local running_vms=$(virsh list --state-running --name 2>/dev/null | wc -l)
+        if [[ "$running_vms" -gt 0 ]]; then
+            echo ""
+            echo "📌 Virtual Machines:"
+            echo "  ℹ️  $running_vms VM(s) are running"
+            echo "  ℹ️  VMs will reconnect to the bridge automatically"
+            echo "  ℹ️  This may take 30-60 seconds for VMs to get network"
+            echo ""
+            echo "  To check VM network status:"
+            echo "    sudo virsh list --state-running --name | while read vm; do"
+            echo "      echo \"\$vm: \$(sudo virsh domifaddr \"\$vm\" 2>/dev/null | grep -oP 'ipv4\\s+\\K[0-9.]+')\""
+            echo "    done"
+        else
+            echo ""
+            echo "📌 Virtual Machines:"
+            echo "  ℹ️  No VMs detected on this bridge"
+            echo "  ℹ️  Start VMs with: sudo virsh start <vm-name>"
+        fi
+    fi
+    
+    # Final user guidance
+    echo ""
+    echo "=============================================="
+    echo "  NETWORK RESTORATION COMPLETE"
+    echo "=============================================="
+    echo ""
+    echo "✅ Internet connectivity is restored"
+    echo ""
+    echo "📌 Next Steps:"
+    echo "  1. Test browsing: ping -c 3 google.com"
+    echo "  2. Check status: sudo $NETWORK_RECOVER status"
+    echo ""
+    if [[ "$IFACE_TYPE" == "bridge" ]] && [[ "$VM_COUNT" -gt 0 ]]; then
+        echo "  ℹ️  VMs will reconnect shortly"
+        echo "  ℹ️  Check VM connectivity with: sudo virsh domifaddr <vm-name>"
+        echo "  ℹ️  If VMs don't have network after 2 minutes, restart them:"
+        echo "      sudo virsh reboot <vm-name>"
+    fi
+    echo "=============================================="
 }
 
-# Trap to ensure restoration even if script is interrupted
+# Trap to ensure restoration even if script is interrupted (Ctrl+C)
 trap restore_network EXIT
 
 if [[ "$DIAGNOSE_ONLY" == "true" ]]; then
@@ -230,11 +313,7 @@ if [[ "$DIAGNOSE_ONLY" == "true" ]]; then
 else
     echo "📌 Running repair (timeout: ${REPAIR_TIMEOUT}s)..."
     
-    # ============================================================
-    # CRITICAL: Set interface override for the repair
-    # This ensures the repair targets the correct interface (br0)
-    # even when the default route is missing after disabling it.
-    # ============================================================
+    # Set the interface override for the repair
     export NETWORK_RECOVER_IFACE="$IFACE"
     
     # Run repair with timeout to prevent hanging on DNS repairs
@@ -242,7 +321,7 @@ else
     timeout "$REPAIR_TIMEOUT" sudo -E $NETWORK_RECOVER repair
     REPAIR_EXIT=$?
     if [[ $REPAIR_EXIT -eq 124 ]]; then
-        echo "  ⚠️  Repair timed out after ${REPAIR_TIMEOUT}s - forcing restoration"
+        echo "  ⚠️  Repair timed out after ${REPAIR_TIMEOUT}s"
     elif [[ $REPAIR_EXIT -ne 0 ]]; then
         echo "  ⚠️  Repair exited with code $REPAIR_EXIT"
     else
@@ -250,73 +329,32 @@ else
     fi
 fi
 
-# Remove trap to avoid duplicate restoration
+# Remove trap to avoid duplicate restoration on normal exit
 trap - EXIT
 
 # Now explicitly restore
 restore_network
 
-# Verification
+# Final verification
 echo ""
 echo "=============================================="
-echo "  TEST RESULTS"
+echo "  FINAL VERIFICATION"
 echo "=============================================="
 echo ""
 
-echo "📌 Final state:"
-if ip link show "$IFACE" | grep -q "UP"; then
-    echo "  ✅ Interface is UP"
-else
-    echo "  ❌ Interface is DOWN"
-fi
-
-FINAL_IP=$(ip -4 addr show "$IFACE" 2>/dev/null | grep -oP 'inet\s\K[0-9.]+' | head -1)
-if [[ -n "$FINAL_IP" ]]; then
-    echo "  ✅ IP: $FINAL_IP"
-else
-    echo "  ❌ No IP assigned"
-fi
-
-if ping -c 1 -W 2 8.8.8.8 &>/dev/null; then
-    echo "  ✅ Internet reachable"
-    INTERNET_OK=true
-else
-    echo "  ❌ Internet unreachable"
-    INTERNET_OK=false
-fi
-
-# DNS check with fallback
-if command -v nslookup &>/dev/null; then
-    if nslookup google.com &>/dev/null 2>&1; then
-        echo "  ✅ DNS working"
-    else
-        echo "  ❌ DNS not working"
-    fi
-elif command -v dig &>/dev/null; then
-    if dig google.com +short &>/dev/null 2>&1; then
-        echo "  ✅ DNS working"
-    else
-        echo "  ❌ DNS not working"
-    fi
-else
-    echo "  ⚠️  nslookup/dig not available - skipping DNS test"
-fi
-
-echo ""
-echo "=============================================="
-echo "  TEST COMPLETE"
-echo "=============================================="
-
-if [[ "$INTERNET_OK" == "true" ]]; then
-    echo "✅ Network recovery test PASSED"
+echo "📌 Testing connectivity..."
+if ping -c 2 -W 2 8.8.8.8 &>/dev/null; then
+    echo "  ✅ Internet: CONNECTED"
+    echo "  ✅ Test PASSED - Network is working"
     echo ""
-    echo "  Run 'sudo $NETWORK_RECOVER status' to verify connectivity"
+    echo "  You can now:"
+    echo "    - Browse the internet"
+    echo "    - Check VMs if applicable"
+    echo "    - Run: sudo $NETWORK_RECOVER status"
     exit 0
 else
-    echo "❌ Network recovery test FAILED"
-    echo ""
-    echo "  Manual recovery options:"
-    echo "    sudo $NETWORK_RECOVER diagnose"
+    echo "  ⏳ Internet: PENDING (may take a moment)"
+    echo "  💡 If internet doesn't come back:"
     echo "    sudo $NETWORK_RECOVER repair"
     echo "    sudo $NETWORK_RECOVER status"
     exit 1
