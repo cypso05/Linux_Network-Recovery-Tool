@@ -1,14 +1,13 @@
-﻿[Desktop Entry]
-Version=1.1.1
+[Desktop Entry]
+Version=1.0
 Type=Application
 Name=Network Diagnose & Repair
 Comment=Diagnose and fix network connectivity issues
 Exec=pkexec /usr/local/bin/network-recover-gui
 Icon=network-recover
 Terminal=false
-Categories=System;Network;
+Categories=Network;
 StartupNotify=true
-X-XFCE-Settings=Network
 Actions=diagnose;repair;status;snapshot;watch
 
 [Desktop Action diagnose]
