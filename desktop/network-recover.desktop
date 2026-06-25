@@ -12,27 +12,27 @@ Actions=diagnose;repair;status;snapshot;watch;web-ui;cli-gui
 
 [Desktop Action diagnose]
 Name=🔍 Diagnose Network
-Exec=/usr/local/bin/network-recover-gui diagnose
+Exec=sh -c "/usr/local/bin/network-recover-gui diagnose"
 
 [Desktop Action repair]
 Name=🔧 Repair Network
-Exec=/usr/local/bin/network-recover-gui repair
+Exec=sh -c "/usr/local/bin/network-recover-gui repair"
 
 [Desktop Action status]
 Name=📊 Network Status
-Exec=/usr/local/bin/network-recover-gui status
+Exec=sh -c "/usr/local/bin/network-recover-gui status"
 
 [Desktop Action snapshot]
 Name=💾 Save Snapshot
-Exec=/usr/local/bin/network-recover-gui snapshot
+Exec=sh -c "/usr/local/bin/network-recover-gui snapshot"
 
 [Desktop Action watch]
 Name=📡 Monitor Network
-Exec=/usr/local/bin/network-recover-gui watch
+Exec=sh -c "/usr/local/bin/network-recover-gui watch"
 
 [Desktop Action web-ui]
 Name=🌐 Open Web UI
-Exec=sudo /usr/local/bin/network-recover-web
+Exec=sh -c "/usr/local/bin/network-recover-web"
 
 [Desktop Action cli-gui]
 Name=🖥️ CLI GUI (Zenity)

@@ -102,6 +102,16 @@ if [[ "$UNINSTALL" == "true" ]]; then
     rm -rf "$LOG_DIR" && echo "  ✅ Removed: $LOG_DIR" || echo "  ⚠️  Not found"
     rm -rf "$SNAPSHOT_DIR" && echo "  ✅ Removed: $SNAPSHOT_DIR" || echo "  ⚠️  Not found"
     
+    # Clear XFCE panel cache
+    echo "📌 Clearing XFCE panel cache..."
+    rm -rf /root/.cache/xfce4/ 2>/dev/null || true
+    for user_home in /home/*; do
+        if [[ -d "$user_home" ]]; then
+            rm -rf "$user_home/.cache/xfce4/" 2>/dev/null || true
+        fi
+    done
+    echo "  ✅ Panel cache cleared"
+    
     echo ""
     echo "=============================================="
     echo "  ✅ UNINSTALLATION COMPLETE!"
@@ -351,7 +361,7 @@ echo ""
 echo "🔧 Removing BOM from scripts..."
 for file in "$BIN_DIR/network-recover" "$BIN_DIR/network-recover-gui" "$BIN_DIR/network-recover-web"; do
     if [[ -f "$file" ]]; then
-        sudo sed -i '1s/^\xEF\xBB\xBF//' "$file" 2>/dev/null
+        sed -i '1s/^\xEF\xBB\xBF//' "$file" 2>/dev/null
         echo "  ✅ Cleaned: $(basename "$file")"
     fi
 done
@@ -488,6 +498,25 @@ echo ""
 echo "🔄 Updating desktop database..."
 update-desktop-database "$APP_DIR" 2>/dev/null || true
 echo -e "${GREEN}✅ Done${NC}"
+
+# Step 9.5: Refresh XFCE panel cache (fix for right-click actions)
+echo ""
+echo "🔄 Refreshing XFCE panel..."
+if pgrep -x "xfce4-panel" > /dev/null; then
+    pkill -9 xfce4-panel 2>/dev/null || true
+    sleep 1
+    rm -rf /root/.cache/xfce4/ 2>/dev/null || true
+    for user_home in /home/*; do
+        if [[ -d "$user_home" ]]; then
+            rm -rf "$user_home/.cache/xfce4/" 2>/dev/null || true
+        fi
+    done
+    xfce4-panel &
+    echo "  ✅ XFCE panel refreshed (right-click actions should now work)"
+else
+    echo "  ℹ️  XFCE panel not running - cache will refresh on next login"
+fi
+echo -e "${GREEN}✅ Panel refresh complete${NC}"
 
 # Step 10: Verify installation
 echo ""
