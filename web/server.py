@@ -364,16 +364,20 @@ class UniversalVMDetector:
     # ============================================================
     # 2. VIRTUALBOX
     # ============================================================
-    
     def _get_virtualbox_vms(self) -> List[VMInfo]:
         """Get all VirtualBox VMs"""
         vms = []
         try:
+            # First check if there are actually any VMs
             result = subprocess.run(
                 ['VBoxManage', 'list', 'vms'],
                 capture_output=True, text=True, timeout=5
             )
             if result.returncode != 0:
+                return vms
+            
+            # If output is empty or only whitespace, no real VMs
+            if not result.stdout.strip():
                 return vms
             
             for line in result.stdout.split('\n'):
@@ -382,12 +386,18 @@ class UniversalVMDetector:
                     if match:
                         vm_name = match.group(1)
                         vm_uuid = match.group(2)
+                        
+                        # Skip if it looks like a false positive
+                        if self._is_false_positive(vm_name):
+                            continue
+                        
                         vm_info = self._get_virtualbox_vm_details(vm_name, vm_uuid)
                         if vm_info:
                             vms.append(vm_info)
         except Exception as e:
-            logger.error(f"VirtualBox detection error: {e}")
-        return vms
+            logger.debug(f"VirtualBox detection error (non-critical): {e}")
+        return vms   
+
     
     def _get_virtualbox_vm_details(self, vm_name: str, vm_uuid: str) -> Optional[VMInfo]:
         """Get detailed VirtualBox VM info"""
@@ -1332,13 +1342,26 @@ class InfrastructureMonitor:
     # ---- Universal VM Management ----
     
     def get_vms_list(self, force_refresh=False):
-        """Get all VMs from all hypervisors"""
+        """Get real VMs only - NOT containers, NOT pods"""
         all_vms = self.vm_detector.get_all_vms(force_refresh)
         
         # Convert to legacy format for frontend compatibility
+        # BUT ONLY include actual VMs (libvirt, virtualbox, vmware, xen, proxmox)
         legacy_vms = []
+        
+        # Define what counts as a real VM
+        vm_hypervisors = ['libvirt', 'virtualbox', 'vmware', 'xen', 'proxmox', 'hyperv']
+        
         for hv_type, vms in all_vms.items():
+            # SKIP containers and pods
+            if hv_type not in vm_hypervisors:
+                continue
+            
             for vm in vms:
+                # Additional filter: skip debug/transient VMs
+                if self.vm_detector._is_false_positive(vm.name):
+                    continue
+                
                 legacy_vms.append({
                     'name': vm.name,
                     'state': vm.state,
@@ -1353,7 +1376,144 @@ class InfrastructureMonitor:
                     'disk_percent': 0
                 })
         
+        # If no VMs found via universal detector, fall back to known VMs
+        if not legacy_vms:
+            legacy_vms = self._get_known_vms_fallback()
+        
+        print(f"VM detection: {len(legacy_vms)} real VMs found")
         return legacy_vms
+
+    def _get_known_vms_fallback(self):
+        """Fallback: Get VMs from known list when universal detector finds nothing"""
+        vms = []
+        known_vm_ips = {
+            'k8s-node-01': '10.0.0.21',
+            'k8s-node-02': '10.0.0.22',
+            'k8s-node-03': '10.0.0.23'
+        }
+        
+        for name, ip in known_vm_ips.items():
+            # Check if VM is reachable
+            try:
+                result = subprocess.run(
+                    f"ping -c 1 -W 1 {ip} 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=2
+                )
+                state = 'running' if result.returncode == 0 else 'unknown'
+                
+                # Try to get virsh state
+                try:
+                    virsh_result = subprocess.run(
+                        f"virsh domstate {name} 2>/dev/null",
+                        shell=True, capture_output=True, text=True, timeout=3
+                    )
+                    if virsh_result.returncode == 0:
+                        state = virsh_result.stdout.strip()
+                except:
+                    pass
+                
+                vms.append({
+                    'name': name,
+                    'state': state,
+                    'ip': ip,
+                    'hypervisor': 'libvirt',
+                    'id': None,
+                    'cpu': self._get_vm_cpu_fallback(name),
+                    'ram': self._get_vm_ram_fallback(name),
+                    'disk': self._get_vm_disk_fallback(name),
+                    'swap': '0Mi',
+                    'ram_percent': self._get_vm_ram_percent_fallback(name),
+                    'disk_percent': self._get_vm_disk_percent_fallback(name)
+                })
+            except Exception as e:
+                print(f"Error checking {name}: {e}")
+        
+        return vms
+
+    def _get_vm_cpu_fallback(self, vm_name):
+        """Get VM CPU via SSH"""
+        ip_map = {'k8s-node-01': '10.0.0.21', 'k8s-node-02': '10.0.0.22', 'k8s-node-03': '10.0.0.23'}
+        ip = ip_map.get(vm_name)
+        if not ip:
+            return '0%'
+        try:
+            result = subprocess.run(
+                f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} \"top -bn1 | grep 'Cpu(s)' | awk '{{print $2}}'\" 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return f"{float(result.stdout.strip()):.0f}%"
+        except:
+            pass
+        return '0%'
+
+    def _get_vm_ram_fallback(self, vm_name):
+        """Get VM RAM via SSH"""
+        ip_map = {'k8s-node-01': '10.0.0.21', 'k8s-node-02': '10.0.0.22', 'k8s-node-03': '10.0.0.23'}
+        ip = ip_map.get(vm_name)
+        if not ip:
+            return '0Mi'
+        try:
+            result = subprocess.run(
+                f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} \"free -h | grep Mem | awk '{{print $3 \\\"/\\\" $2}}'\" 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except:
+            pass
+        return '0Mi'
+
+    def _get_vm_disk_fallback(self, vm_name):
+        """Get VM disk via SSH"""
+        ip_map = {'k8s-node-01': '10.0.0.21', 'k8s-node-02': '10.0.0.22', 'k8s-node-03': '10.0.0.23'}
+        ip = ip_map.get(vm_name)
+        if not ip:
+            return '0GiB'
+        try:
+            result = subprocess.run(
+                f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} \"df -h / | tail -1 | awk '{{print $3 \\\"/\\\" $2}}'\" 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except:
+            pass
+        return '0GiB'
+
+    def _get_vm_ram_percent_fallback(self, vm_name):
+        """Get VM RAM percentage via SSH"""
+        ip_map = {'k8s-node-01': '10.0.0.21', 'k8s-node-02': '10.0.0.22', 'k8s-node-03': '10.0.0.23'}
+        ip = ip_map.get(vm_name)
+        if not ip:
+            return 0
+        try:
+            result = subprocess.run(
+                f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} \"free | grep Mem | awk '{{printf \\\"%.0f\\\", \\$3/\\$2*100}}'\" 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip())
+        except:
+            pass
+        return 0
+
+    def _get_vm_disk_percent_fallback(self, vm_name):
+        """Get VM disk percentage via SSH"""
+        ip_map = {'k8s-node-01': '10.0.0.21', 'k8s-node-02': '10.0.0.22', 'k8s-node-03': '10.0.0.23'}
+        ip = ip_map.get(vm_name)
+        if not ip:
+            return 0
+        try:
+            result = subprocess.run(
+                f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} \"df / | tail -1 | awk '{{print \\$5}}' | tr -d '%'\" 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip())
+        except:
+            pass
+        return 0
     
     def get_vm_details(self, vm_name):
         """Get comprehensive VM details"""
