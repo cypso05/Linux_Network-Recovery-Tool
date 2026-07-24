@@ -471,3 +471,49 @@ footer {
         padding: 4px 6px;
     }
 }
+
+/* Terminal styles */
+.terminal-container {
+    background: #0a0e27;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 13px;
+    height: 300px;
+    overflow-y: auto;
+    color: #0f0;
+    position: relative;
+}
+
+.terminal-input-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.terminal-prompt {
+    color: #64b5f6;
+    font-weight: bold;
+}
+
+.terminal-input {
+    background: transparent;
+    border: none;
+    color: #0f0;
+    font-family: inherit;
+    font-size: 13px;
+    flex: 1;
+    outline: none;
+}
+
+.terminal-output {
+    color: #8890b0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.terminal-output .success { color: #4caf50; }
+.terminal-output .error { color: #f44336; }
+.terminal-output .warning { color: #ff9800; }
+.terminal-output .info { color: #64b5f6; }

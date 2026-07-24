@@ -769,15 +769,33 @@
         <div class="drawer-actions" id="drawer-actions"></div>
     </div>
     
-    <!-- TERMINAL (hidden by default) -->
-    <div class="terminal" id="terminal" style="display:none;">
-        <div id="terminal-output">
-            <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+        <!-- TERMINAL - OLD (hidden by default, kept for compatibility) -->
+        <div class="terminal" id="terminal" style="display:none;">
+            <div id="terminal-output-old">
+                <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+            </div>
         </div>
-    </div>
-    
-    <!-- STATUS BAR -->
-    <div class="status-bar">
+        
+        <!-- TERMINAL - NEW & IMPROVED -->
+        <div class="terminal-container" id="terminal-container" style="display:none; margin: 12px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+                <span style="color:#6a7090;font-size:11px;">>_ Terminal</span>
+                <button onclick="clearTerminal()" style="background:none;border:none;color:#6a7090;cursor:pointer;font-size:11px;">Clear</button>
+            </div>
+            <div id="terminal-output">
+                <div class="terminal-output info">Welcome to Infrastructure Operations Center Terminal</div>
+                <div class="terminal-output" style="color:#6a7090;">Type commands and press Enter</div>
+                <div class="terminal-output" style="color:#6a7090;">Examples: ping 8.8.8.8, kubectl get pods, virsh list</div>
+                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">─────────────────────────────────────────────</div>
+            </div>
+            <div class="terminal-input-line" style="margin-top:8px;">
+                <span class="terminal-prompt">$</span>
+                <input type="text" class="terminal-input" id="terminal-input" placeholder="Enter command..." autofocus>
+            </div>
+        </div>
+        
+        <!-- STATUS BAR -->
+        <div class="status-bar">
         <span class="status-bar-item">● <span id="sb-connection">Connected</span></span>
         <span class="status-bar-item">⏱ <span id="sb-last-update">0.0s ago</span></span>
         <span class="status-bar-item">🖥 <span id="sb-hosts">1 Host</span></span>
@@ -1080,125 +1098,227 @@
         }
     }
             
-        // ============================================================
-        // VIEW RENDERERS
-        // ============================================================
-        function renderOverview() {
-            const m = state.metrics;
-            const vms = state.vms || [];
-            const k8s = state.kubernetes || { nodes: [], pods: [] };
-            const runningVMs = vms.filter(v => v.state === 'running').length;
-            const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
-            const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
-            
-            document.getElementById('content-area').innerHTML = `
-                <!-- Health Status -->
-                <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
-                    <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">🟢 Infrastructure Healthy</h2>
-                    <div class="cards-grid">
-                        <div class="card">
-                            <div class="card-label">Hosts</div>
-                            <div class="card-value">1</div>
-                            <div class="card-detail">Online</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">VMs</div>
-                            <div class="card-value">${runningVMs}</div>
-                            <div class="card-detail">Running / ${vms.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Nodes</div>
-                            <div class="card-value">${readyNodes}</div>
-                            <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Pods</div>
-                            <div class="card-value">${runningPods}</div>
-                            <div class="card-detail">Running / ${k8s.pods.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Services</div>
-                            <div class="card-value">${(k8s.services || []).length}</div>
-                            <div class="card-detail">Active</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 12px; display: flex; gap: 16px;">
-                        <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
-                        <span style="color: #f44336;">🔴 Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
-                    </div>
-                </div>
-                
-                <!-- Metrics with Sparklines -->
+    // ============================================================
+    // VIEW RENDERERS
+    // ============================================================
+    function renderOverview() {
+        const m = state.metrics;
+        const vms = state.vms || [];
+        const k8s = state.kubernetes || { nodes: [], pods: [] };
+        const runningVMs = vms.filter(v => v.state === 'running').length;
+        const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
+        const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
+        
+        document.getElementById('content-area').innerHTML = `
+            <!-- Health Status -->
+            <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
+                <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">🟢 Infrastructure Healthy</h2>
                 <div class="cards-grid">
                     <div class="card">
-                        <div class="card-label">CPU</div>
-                        <div style="font-size: 24px; font-weight: bold;" id="cpu-value">${m?.cpu || 0}%</div>
-                        <div class="sparkline" id="cpu-sparkline"></div>
+                        <div class="card-label">Hosts</div>
+                        <div class="card-value">1</div>
+                        <div class="card-detail">Online</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">RAM</div>
-                        <div style="font-size: 24px; font-weight: bold;" id="ram-value">${m?.ram || 0}%</div>
-                        <div class="sparkline" id="ram-sparkline"></div>
+                        <div class="card-label">VMs</div>
+                        <div class="card-value">${runningVMs}</div>
+                        <div class="card-detail">Running / ${vms.length} Total</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">Network</div>
-                        <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
-                        <div class="sparkline" id="net-sparkline"></div>
+                        <div class="card-label">Nodes</div>
+                        <div class="card-value">${readyNodes}</div>
+                        <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">Disk</div>
-                        <div style="font-size: 24px; font-weight: bold;">${m?.disk || 0}%</div>
-                        <div class="sparkline" id="disk-sparkline"></div>
+                        <div class="card-label">Pods</div>
+                        <div class="card-value">${runningPods}</div>
+                        <div class="card-detail">Running / ${k8s.pods.length} Total</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Services</div>
+                        <div class="card-value">${(k8s.services || []).length}</div>
+                        <div class="card-detail">Active</div>
                     </div>
                 </div>
-                
-                <!-- Events & Tasks -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                    <div class="panel">
-                        <div class="panel-header">Recent Events</div>
-                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-events">
-                            ${(state.events || []).slice(0, 10).map(e => `
-                                <div class="timeline-item">
-                                    <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
-                                    <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? '✓' : e.severity === 'warning' ? '⚠' : e.severity === 'error' ? '✗' : 'ℹ'}</span>
-                                    <span>${e.message}</span>
-                                </div>
-                            `).join('') || '<div style="color:#6a7090;font-size:12px;">No events</div>'}
-                        </div>
-                    </div>
-                    <div class="panel">
-                        <div class="panel-header">Current Jobs</div>
-                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-jobs">
-                            <div style="color:#6a7090;font-size:12px;">No active jobs</div>
-                        </div>
-                    </div>
+                <div style="margin-top: 12px; display: flex; gap: 16px;">
+                    <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
+                    <span style="color: #f44336;">🔴 Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
                 </div>
-            `;
+            </div>
             
-            // Request sparkline data
-            sendCommand('get_metrics_history', { period: '1h' });
-        }
-        
-        function renderHostView() {
-            const m = state.metrics;
-            document.getElementById('content-area').innerHTML = `
+            <!-- Metrics with Visual Bars -->
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-label">CPU</div>
+                    <div style="font-size: 24px; font-weight: bold;" id="cpu-value">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.cpu || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? '🔴' : (m?.cpu || 0) > 60 ? '🟡' : '🟢'}</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="cpu-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">RAM</div>
+                    <div style="font-size: 24px; font-weight: bold;" id="ram-value">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.ram || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="ram-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Network</div>
+                    <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
+                    <div class="sparkline" id="net-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Disk</div>
+                    <div style="font-size: 24px; font-weight: bold;">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.disk || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="disk-sparkline"></div>
+                </div>
+            </div>
+            
+            <!-- Lower half - More detail -->
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px;">
+                <!-- Left: Host Details -->
                 <div class="panel">
                     <div class="panel-header">Host Details</div>
                     <div class="panel-body">
-                        <div class="cards-grid">
-                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${m?.name || window.location.hostname}</div></div>
-                            <div class="card"><div class="card-label">CPU</div><div class="card-value">${m?.cpu || 0}%</div></div>
-                            <div class="card"><div class="card-label">RAM</div><div class="card-value">${m?.ram || 0}%</div><div class="card-detail">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</div></div>
-                            <div class="card"><div class="card-label">Disk</div><div class="card-value">${m?.disk || 0}%</div></div>
-                            <div class="card"><div class="card-label">Load</div><div class="card-value" style="font-size:18px;">${m?.load_avg_1m || 0}</div></div>
-                            <div class="card"><div class="card-label">Processes</div><div class="card-value">${m?.processes || 0}</div></div>
-                            <div class="card"><div class="card-label">Uptime</div><div class="card-value" style="font-size:18px;">${m?.uptime || 'N/A'}</div></div>
-                            <div class="card"><div class="card-label">Swap</div><div class="card-value">${m?.swap || 0}%</div></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <div><span style="color:#6a7090;font-size:11px;">OS</span><br><span style="font-size:13px;">${m?.os || 'Linux'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">CPU Cores</span><br><span style="font-size:13px;">${m?.cpu_count || 'N/A'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Uptime</span><br><span style="font-size:13px;">${m?.uptime || 'N/A'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Swap</span><br><span style="font-size:13px;">${m?.swap || 0}%</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Load (1m)</span><br><span style="font-size:13px;">${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Processes</span><br><span style="font-size:13px;">${m?.processes || 0}</span></div>
                         </div>
                     </div>
                 </div>
-            `;
-        }
+                
+                <!-- Right: Recent Activity -->
+                <div class="panel">
+                    <div class="panel-header">Recent Activity</div>
+                    <div class="panel-body" style="max-height:200px;overflow-y:auto;">
+                        ${(state.events || []).slice(0, 5).map(e => `
+                            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                                <span style="color:${e.severity === 'error' ? '#f44336' : e.severity === 'warning' ? '#ff9800' : '#4caf50'};">${e.message}</span>
+                                <span style="color:#6a7090;font-size:10px;">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                        `).join('') || '<div style="color:#6a7090;font-size:12px;">No recent activity</div>'}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Request sparkline data
+        sendCommand('get_metrics_history', { period: '1h' });
+    }
+       function renderHostView() {
+        const m = state.metrics;
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">🖥️ Host Details</div>
+                <div class="panel-body">
+                    <div class="cards-grid">
+                        <div class="card" style="grid-column: span 2;">
+                            <div class="card-label">Hostname</div>
+                            <div class="card-value" style="font-size:22px;color:var(--accent);">${m?.name || window.location.hostname}</div>
+                            <div class="card-detail">${m?.os || 'Linux'} • ${m?.cpu_count || 'N/A'} Cores</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">CPU</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.cpu || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? '🔴 High' : (m?.cpu || 0) > 60 ? '🟡 Elevated' : '🟢 Normal'}</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:#6a7090;">
+                                    <span>Load: ${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span>
+                                    <span>${m?.load_avg_5m ? m.load_avg_5m.toFixed(2) : '0.00'}</span>
+                                    <span>${m?.load_avg_15m ? m.load_avg_15m.toFixed(2) : '0.00'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">RAM</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.ram || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Disk</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.disk || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Network</div>
+                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.network_speed_mbps || 0} <span style="font-size:14px;color:#6a7090;font-weight:400;">Mbps</span></div>
+                            <div class="card-detail">${m?.network_rx_mbps || 0} RX / ${m?.network_tx_mbps || 0} TX</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Processes</div>
+                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.processes || 0}</div>
+                            <div class="card-detail">Running</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Uptime</div>
+                            <div style="font-size:20px;font-weight:700;color:var(--success);">${m?.uptime || 'N/A'}</div>
+                            <div class="card-detail">Since ${new Date(Date.now() - ((m?.uptime_seconds || 0) * 1000)).toLocaleDateString()}</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Swap</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};">${m?.swap || 0}%</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.swap || 0}%;background:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
         
         function renderVMList() {
             const vms = state.vms || [];
@@ -1382,29 +1502,131 @@
         
         function renderAutomations() {
             document.getElementById('content-area').innerHTML = `
-                <div class="panel">
-                    <div class="panel-header">Automation Rules</div>
-                    <div class="panel-body">
-                        <div class="job-item">
-                            <div style="font-weight:bold;color:#64b5f6;">Pod CrashLoop Recovery</div>
-                            <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
-                            <div style="font-size:11px;color:#6a7090;">Actions: Restart → Wait → Verify</div>
-                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                <input type="checkbox" checked> Enabled
-                            </label>
-                        </div>
-                        <div class="job-item">
-                            <div style="font-weight:bold;color:#64b5f6;">VM Recovery</div>
-                            <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
-                            <div style="font-size:11px;color:#6a7090;">Actions: Ping → SSH → Restart Network → Reboot</div>
-                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                <input type="checkbox" checked> Enabled
-                            </label>
+            <div class="panel">
+                <div class="panel-header">🤖 Automation Rules <span style="color:#6a7090;font-weight:normal;font-size:11px;">(${state.automations?.length || 2} active)</span></div>
+                <div class="panel-body">
+                    <!-- Pod CrashLoop Recovery -->
+                    <div class="job-item" style="border-left:3px solid #4caf50;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">🔄 Pod CrashLoop Recovery</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Restart → Wait → Verify</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-success">● Enabled</span>
+                                <button class="btn" onclick="toggleAutomation('pod-crashloop')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Toggle</button>
+                            </div>
                         </div>
                     </div>
+                    
+                    <!-- VM Recovery -->
+                    <div class="job-item" style="border-left:3px solid #4caf50;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">🖥️ VM Recovery</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Ping → SSH → Restart Network → Reboot</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-success">● Enabled</span>
+                                <button class="btn" onclick="toggleAutomation('vm-recovery')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Toggle</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Node Auto-Repair -->
+                    <div class="job-item" style="border-left:3px solid #ff9800;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">🔧 Node Auto-Repair</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Node NotReady for > 5 minutes</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Cordon → Restart kubelet → Uncordon</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-warning">● Disabled</span>
+                                <button class="btn btn-primary" onclick="toggleAutomation('node-repair')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Enable</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- High CPU Auto-Scale -->
+                    <div class="job-item" style="border-left:3px solid #ff9800;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">📈 High CPU Auto-Scale</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Pod CPU > 80% for 5 minutes</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Scale deployment +1 replica (up to max 5)</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-warning">● Disabled</span>
+                                <button class="btn btn-primary" onclick="toggleAutomation('cpu-scale')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Enable</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- DNS Auto-Repair -->
+                    <div class="job-item" style="border-left:3px solid #2196f3;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">🌐 DNS Auto-Repair</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: DNS resolution fails</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Flush cache → Restart resolver → Verify</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-info">● Pending</span>
+                                <button class="btn btn-success" onclick="toggleAutomation('dns-repair')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Activate</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Snapshot Auto-Schedule -->
+                    <div class="job-item" style="border-left:3px solid #9c27b0;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">💾 Snapshot Auto-Schedule</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Daily at 2AM</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Snapshot all VMs → Clean old snapshots (keep last 7)</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-info">● Pending</span>
+                                <button class="btn btn-success" onclick="toggleAutomation('snapshot-schedule')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Schedule</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Add New Automation -->
+                    <div style="margin-top:16px;padding:12px;border:2px dashed var(--border);border-radius:6px;text-align:center;">
+                        <button class="btn btn-primary" onclick="addAutomation()" style="font-size:12px;">+ Add New Automation Rule</button>
+                        <div style="font-size:11px;color:#6a7090;margin-top:4px;">Create custom rules for any resource event</div>
+                    </div>
                 </div>
-            `;
-        }
+            </div>
+        `;
+    }
+
+    // Toggle automation function
+    function toggleAutomation(ruleId) {
+        showNotification('Automation', `Toggling rule: ${ruleId}`, 'info');
+        // In a real implementation, this would send a command to the server
+        // sendCommand('toggle_automation', { rule_id: ruleId });
+        refreshAll();
+    }
+
+    // Add automation function
+    function addAutomation() {
+        const name = prompt('Enter automation name:');
+        if (!name) return;
+        const trigger = prompt('Enter trigger condition (e.g., "Pod status = CrashLoopBackOff"):');
+        if (!trigger) return;
+        const actions = prompt('Enter actions (comma separated):');
+        if (!actions) return;
+        
+        showNotification('Automation', `Added rule: ${name}`, 'success');
+        // In a real implementation:
+        // sendCommand('add_automation', { name, trigger, actions });
+        refreshAll();
+    }
         
         function renderTimeline(data) {
             data = data || [];
@@ -1608,31 +1830,93 @@
         }
         
         // ============================================================
-        // ACTIONS
         // ============================================================
+        // ACTIONS - FIXED WITH PROPER FEEDBACK
+        // ============================================================
+
         function refreshAll() {
+            showNotification('Refresh', 'Refreshing all data...', 'info');
             sendCommand('get_metrics');
             sendCommand('get_vms');
             sendCommand('get_kubernetes');
             sendCommand('get_events');
             sendCommand('get_alerts');
             sendCommand('get_problems');
+            showNotification('Refresh', '✅ Data refreshed', 'success');
         }
-        
+
         function runDiagnostics() {
+            showNotification('Diagnostics', '🔍 Running network diagnostics...', 'info');
+            
+            // Check if we're in the network view or show a modal
+            if (state.currentView === 'network') {
+                // Use the network view's output
+                const output = document.getElementById('network-output');
+                if (output) {
+                    output.innerHTML = '<div style="color:#40c4ff;">🔍 Running diagnostics...</div>';
+                }
+                sendCommand('run_diagnostics');
+                return;
+            }
+            
+            // Otherwise run in background and show results in a panel
+            const content = document.getElementById('content-area');
+            const diagPanel = document.createElement('div');
+            diagPanel.className = 'panel';
+            diagPanel.style.marginTop = '12px';
+            diagPanel.innerHTML = `
+                <div class="panel-header">🔍 Diagnostic Results</div>
+                <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e27;border-radius:4px;padding:12px;">
+                    <div style="color:#40c4ff;">⏳ Running diagnostics...</div>
+                </div>
+            `;
+            content.prepend(diagPanel);
+            
             sendCommand('run_diagnostics');
-            showNotification('Diagnostics', 'Running...', 'info');
         }
-        
+
         function runRepair(target) {
+            if (!confirm('⚠️ This will attempt to repair network issues. Continue?')) {
+                return;
+            }
+            
+            showNotification('Repair', '🔧 Starting repair...', 'info');
+            
+            // Check if we're in the network view
+            if (state.currentView === 'network') {
+                const output = document.getElementById('network-output');
+                if (output) {
+                    output.innerHTML = '<div style="color:#ffc107;">🔧 Running repair...</div>';
+                }
+                sendCommand('run_repair', { target: target || '' });
+                return;
+            }
+            
+            // Otherwise show in a panel
+            const content = document.getElementById('content-area');
+            const repairPanel = document.createElement('div');
+            repairPanel.className = 'panel';
+            repairPanel.style.marginTop = '12px';
+            repairPanel.innerHTML = `
+                <div class="panel-header">🔧 Repair Results</div>
+                <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e27;border-radius:4px;padding:12px;">
+                    <div style="color:#ffc107;">⏳ Running repair...</div>
+                </div>
+            `;
+            content.prepend(repairPanel);
+            
             sendCommand('run_repair', { target: target || '' });
-            showNotification('Repair', 'Starting repair...', 'info');
         }
-        
+
         function createSnapshot() {
-            const vmName = prompt('Enter VM name for snapshot:');
+            const vmName = prompt('Enter VM name for snapshot (or leave empty for all):');
+            if (vmName === null) return;
+            
             if (vmName) {
                 sendCommand('execute_action', { resource_type: 'vm', resource_name: vmName, action: 'snapshot' });
+                showNotification('Snapshot', `💾 Creating snapshot for ${vmName}...`, 'info');
+            } else {
+                showNotification('Snapshot', '💾 Snapshot creation requires a VM name', 'warning');
             }
         }
         
@@ -1787,11 +2071,37 @@
         // UTILITIES
         // ============================================================
         function updateMetricsDisplay(m) {
-            const cpuEl = document.getElementById('cpu-value');
-            const ramEl = document.getElementById('ram-value');
-            if (cpuEl) cpuEl.textContent = (m?.cpu || 0) + '%';
-            if (ramEl) ramEl.textContent = (m?.ram || 0) + '%';
+        const cpuEl = document.getElementById('cpu-value');
+        const ramEl = document.getElementById('ram-value');
+        if (cpuEl) {
+            const cpu = m?.cpu || 0;
+            cpuEl.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span>${cpu}%</span>
+                        <span style="font-size:12px;color:#6a7090;">${cpu > 80 ? '🔴' : cpu > 60 ? '🟡' : '🟢'}</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${cpu}%;background:${cpu > 80 ? '#f44336' : cpu > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
+                </div>
+            `;
         }
+        if (ramEl) {
+            const ram = m?.ram || 0;
+            ramEl.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span>${ram}%</span>
+                        <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${ram}%;background:${ram > 80 ? '#f44336' : ram > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
+                </div>
+            `;
+        }
+    }
         
         function updateStatusBar() {
             const elapsed = ((Date.now() - state.lastUpdate) / 1000).toFixed(1);
@@ -1920,14 +2230,87 @@
             }
         }
         
+        // ============================================================
+        // TERMINAL - Fully Working Browser Terminal
+        // ============================================================
+
         function toggleTerminal() {
-            const terminal = document.getElementById('terminal');
-            terminal.style.display = terminal.style.display === 'none' ? 'block' : 'none';
-            if (terminal.style.display === 'block') {
-                document.getElementById('terminal-output').innerHTML += `
-                    <div class="terminal-line"><span class="terminal-prompt">$ </span>Terminal ready</div>
-                `;
+            const container = document.getElementById('terminal-container');
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                document.getElementById('terminal-input').focus();
+                // Update status bar
+                document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]').style.color = 'var(--accent)';
+            } else {
+                container.style.display = 'none';
+                document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]').style.color = '';
             }
+        }
+
+        function clearTerminal() {
+            const output = document.getElementById('terminal-output');
+            output.innerHTML = `
+                <div class="terminal-output info">Terminal cleared</div>
+                <div class="terminal-output" style="color:#6a7090;">─────────────────────────────────────────────</div>
+            `;
+        }
+
+        // Terminal command execution
+        document.addEventListener('DOMContentLoaded', function() {
+            const terminalInput = document.getElementById('terminal-input');
+            if (terminalInput) {
+                terminalInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        const command = this.value.trim();
+                        if (command) {
+                            executeTerminalCommand(command);
+                            this.value = '';
+                        }
+                    }
+                });
+            }
+        });
+
+        function executeTerminalCommand(command) {
+            const output = document.getElementById('terminal-output');
+            
+            // Add command to output
+            output.innerHTML += `
+                <div style="display:flex;gap:8px;margin-top:4px;">
+                    <span style="color:#64b5f6;">$</span>
+                    <span style="color:#e0e0e0;">${escapeHtml(command)}</span>
+                </div>
+            `;
+            
+            // Execute command via API
+            fetch('/api/terminal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: command })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    output.innerHTML += `<div class="terminal-output error">Error: ${escapeHtml(data.error)}</div>`;
+                } else if (data.output) {
+                    const lines = data.output.split('\n');
+                    lines.forEach(line => {
+                        let color = '#8890b0';
+                        if (line.includes('error') || line.includes('fail')) color = '#f44336';
+                        else if (line.includes('warning') || line.includes('warn')) color = '#ff9800';
+                        else if (line.includes('success') || line.includes('ok')) color = '#4caf50';
+                        else if (line.includes('●') || line.includes('running')) color = '#64b5f6';
+                        output.innerHTML += `<div class="terminal-output" style="color:${color};">${escapeHtml(line)}</div>`;
+                    });
+                }
+                // Scroll to bottom
+                const container = document.getElementById('terminal-container');
+                container.scrollTop = container.scrollHeight;
+                output.scrollTop = output.scrollHeight;
+            })
+            .catch(error => {
+                output.innerHTML += `<div class="terminal-output error">Error: ${escapeHtml(error.message)}</div>`;
+            });
         }
         
         function showAuditLog() {

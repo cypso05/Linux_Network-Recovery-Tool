@@ -346,17 +346,27 @@ class InfrastructureMonitor:
         return f"{days}d {hours}h {minutes}m"
     
     # ---- VM Management (Universal Detection) ----
-    
+        
     def get_vms_list(self):
         """Universal VM detection - works with any hypervisor, cloud, or environment"""
         vms = []
         detected_methods = []
         seen_names = set()
         
+        # Define known VMs to avoid duplicates
+        known_vm_names = ['k8s-node-01', 'k8s-node-02', 'k8s-node-03']
+        known_vm_ips = {
+            'k8s-node-01': '10.0.0.21',
+            'k8s-node-02': '10.0.0.22',
+            'k8s-node-03': '10.0.0.23'
+        }
+        
+        # ------------------------------------------------------------------
         # METHOD 1: libvirt / KVM / QEMU (virsh)
+        # ------------------------------------------------------------------
         try:
             result = subprocess.run(['virsh', 'list', '--all'], 
-                                  capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')[2:]
                 for line in lines:
@@ -377,12 +387,14 @@ class InfrastructureMonitor:
                                     'ram': self._get_vm_ram(vm_name),
                                     'disk': self._get_vm_disk(vm_name)
                                 })
-                if vms:
-                    detected_methods.append('libvirt')
+                    if vms:
+                        detected_methods.append('libvirt')
         except Exception as e:
             print(f"libvirt detection: {e}")
         
-        # METHOD 2: QEMU Processes
+        # ------------------------------------------------------------------
+        # METHOD 2: QEMU Processes (skip known VMs to avoid duplicates)
+        # ------------------------------------------------------------------
         try:
             result = subprocess.run(
                 "ps aux | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' 2>/dev/null",
@@ -391,6 +403,9 @@ class InfrastructureMonitor:
             if result.returncode == 0 and result.stdout.strip():
                 for name in result.stdout.strip().split('\n'):
                     name = name.strip().rstrip(',')
+                    # Skip known VMs - they'll be added by the fallback
+                    if name in known_vm_names:
+                        continue
                     if name and name not in seen_names:
                         seen_names.add(name)
                         vms.append({
@@ -403,11 +418,13 @@ class InfrastructureMonitor:
                             'ram': '0%',
                             'disk': '0%'
                         })
-                detected_methods.append('qemu')
+                    detected_methods.append('qemu')
         except Exception as e:
             print(f"QEMU detection: {e}")
         
-        # METHOD 3: Docker Containers
+        # ------------------------------------------------------------------
+        # METHOD 3: Docker Containers (node-like containers)
+        # ------------------------------------------------------------------
         try:
             result = subprocess.run(
                 "docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null",
@@ -417,6 +434,9 @@ class InfrastructureMonitor:
                 for line in result.stdout.strip().split('\n'):
                     if '|' in line:
                         name, status, image = line.split('|', 2)
+                        # Skip if it matches a known VM name
+                        if name in known_vm_names:
+                            continue
                         if any(keyword in name.lower() for keyword in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master', 'control']):
                             if name not in seen_names:
                                 seen_names.add(name)
@@ -430,11 +450,14 @@ class InfrastructureMonitor:
                                     'ram': '0%',
                                     'disk': '0%'
                                 })
-                detected_methods.append('docker')
+                    if vms:
+                        detected_methods.append('docker')
         except Exception as e:
             print(f"Docker detection: {e}")
         
-        # METHOD 4: LXC / LXD
+        # ------------------------------------------------------------------
+        # METHOD 4: LXC / LXD Containers
+        # ------------------------------------------------------------------
         try:
             result = subprocess.run(
                 "lxc list --format csv -c n,s 2>/dev/null",
@@ -445,6 +468,9 @@ class InfrastructureMonitor:
                     if ',' in line:
                         name, status = line.split(',', 1)
                         name = name.strip()
+                        # Skip if it matches a known VM name
+                        if name in known_vm_names:
+                            continue
                         if name and name not in seen_names:
                             seen_names.add(name)
                             vms.append({
@@ -457,19 +483,117 @@ class InfrastructureMonitor:
                                 'ram': '0%',
                                 'disk': '0%'
                             })
-                detected_methods.append('lxc')
+                    if vms:
+                        detected_methods.append('lxc')
         except Exception as e:
             print(f"LXC detection: {e}")
         
-        # METHOD 5: Known VMs (fallback)
-        known_vms = {
-            '10.0.0.21': 'k8s-node-01',
-            '10.0.0.22': 'k8s-node-02', 
-            '10.0.0.23': 'k8s-node-03'
-        }
-        for ip, name in known_vms.items():
+        # ------------------------------------------------------------------
+        # METHOD 5: AWS EC2 (via metadata)
+        # ------------------------------------------------------------------
+        try:
+            # Check if running on AWS
+            result = subprocess.run(
+                "curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                instance_id = result.stdout.strip()
+                # Get instance name from tags or use instance-id
+                name_result = subprocess.run(
+                    "curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/tags/instance/Name 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+                vm_name = name_result.stdout.strip() if name_result.stdout.strip() else instance_id
+                if vm_name not in seen_names:
+                    seen_names.add(vm_name)
+                    vms.append({
+                        'name': vm_name,
+                        'state': 'running',
+                        'ip': 'aws',
+                        'hypervisor': 'aws',
+                        'id': instance_id,
+                        'cpu': '0%',
+                        'ram': '0%',
+                        'disk': '0%'
+                    })
+                    detected_methods.append('aws')
+        except Exception as e:
+            print(f"AWS detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 6: Azure (via metadata)
+        # ------------------------------------------------------------------
+        try:
+            # Check if running on Azure
+            result = subprocess.run(
+                "curl -s --connect-timeout 2 -H Metadata:true 'http://169.254.169.254/metadata/instance/compute/name?api-version=2021-02-01&format=text' 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                vm_name = result.stdout.strip()
+                # Get VM ID
+                id_result = subprocess.run(
+                    "curl -s --connect-timeout 2 -H Metadata:true 'http://169.254.169.254/metadata/instance/compute/vmId?api-version=2021-02-01&format=text' 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+                vm_id = id_result.stdout.strip() if id_result.stdout.strip() else 'azure-vm'
+                if vm_name not in seen_names:
+                    seen_names.add(vm_name)
+                    vms.append({
+                        'name': vm_name,
+                        'state': 'running',
+                        'ip': 'azure',
+                        'hypervisor': 'azure',
+                        'id': vm_id,
+                        'cpu': '0%',
+                        'ram': '0%',
+                        'disk': '0%'
+                    })
+                    detected_methods.append('azure')
+        except Exception as e:
+            print(f"Azure detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 7: GCP (via metadata)
+        # ------------------------------------------------------------------
+        try:
+            # Check if running on GCP
+            result = subprocess.run(
+                "curl -s --connect-timeout 2 -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/name' 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                vm_name = result.stdout.strip()
+                # Get VM ID
+                id_result = subprocess.run(
+                    "curl -s --connect-timeout 2 -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/id' 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+                vm_id = id_result.stdout.strip() if id_result.stdout.strip() else 'gcp-vm'
+                if vm_name not in seen_names:
+                    seen_names.add(vm_name)
+                    vms.append({
+                        'name': vm_name,
+                        'state': 'running',
+                        'ip': 'gcp',
+                        'hypervisor': 'gcp',
+                        'id': vm_id,
+                        'cpu': '0%',
+                        'ram': '0%',
+                        'disk': '0%'
+                    })
+                    detected_methods.append('gcp')
+        except Exception as e:
+            print(f"GCP detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 8: Known VMs (ALWAYS included as fallback)
+        # ------------------------------------------------------------------
+        for ip, name in known_vm_ips.items():
             if name not in seen_names:
                 seen_names.add(name)
+                # Check if reachable via ping
                 reachable = False
                 try:
                     result = subprocess.run(
@@ -479,6 +603,7 @@ class InfrastructureMonitor:
                     reachable = result.returncode == 0
                 except:
                     pass
+                
                 vms.append({
                     'name': name,
                     'state': 'running' if reachable else 'offline',
@@ -489,9 +614,14 @@ class InfrastructureMonitor:
                     'ram': '0%',
                     'disk': '0%'
                 })
+        
         detected_methods.append('known_vms')
         
+        # ------------------------------------------------------------------
+        # Log detection summary
+        # ------------------------------------------------------------------
         print(f"VM detection methods: {', '.join(set(detected_methods))} | Total VMs: {len(vms)}")
+        
         return vms
     
     def _get_vm_ip(self, vm_name):
@@ -1153,11 +1283,17 @@ class APIHandler(SimpleHTTPRequestHandler):
             params = json.loads(body)
         except:
             params = {}
+        
+        # Parse query parameters for GET-style POST requests
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        
         routes = {
             '/api/diagnostics': lambda: self.api_run_diagnostics(),
             '/api/repair': lambda: self.api_run_repair(params.get('target')),
             '/api/execute': lambda: self.api_execute_action(params),
             '/api/alerts/acknowledge': lambda: self.api_acknowledge_alert(params),
+            '/api/terminal': lambda: self.api_terminal(params),  # ← TERMINAL ENDPOINT
         }
         handler = routes.get(path)
         if handler:
@@ -1195,51 +1331,67 @@ class APIHandler(SimpleHTTPRequestHandler):
             'timestamp': datetime.now().isoformat(),
             'uptime': self.monitor._get_uptime()
         }
+    
     def api_get_metrics(self):
         return self.monitor.get_system_metrics()
+    
     def api_get_metrics_history(self):
         from urllib.parse import urlparse, parse_qs
         query = parse_qs(urlparse(self.path).query)
         period = query.get('period', ['1h'])[0]
         return self.monitor.get_metrics_history(period)
+    
     def api_get_host(self):
         return self.monitor.get_host_info()
+    
     def api_get_vms(self):
         return self.monitor.get_vms_list()
+    
     def api_get_vm_details(self):
         from urllib.parse import urlparse, parse_qs
         query = parse_qs(urlparse(self.path).query)
         name = query.get('name', [''])[0]
         return self.monitor.get_vm_details(name) if name else {'error': 'Missing name parameter'}
+    
     def api_get_kubernetes(self):
         return self.monitor.get_kubernetes_resources()
+    
     def api_get_events(self):
         return list(self.monitor.events)[:100]
+    
     def api_get_timeline(self):
         from urllib.parse import urlparse, parse_qs
         query = parse_qs(urlparse(self.path).query)
         hours = int(query.get('hours', ['1'])[0])
         return self.monitor.get_timeline(hours)
+    
     def api_get_alerts(self):
         return self.monitor.alerts
+    
     def api_get_audit_log(self):
         return list(self.monitor.audit_log)[:100]
+    
     def api_get_problems(self):
         return self.monitor.get_detected_problems()
+    
     def api_get_jobs(self):
         return {
             'running': list(self.monitor.automation.running_jobs.values()),
             'completed': list(self.monitor.automation.completed_jobs)[:20]
         }
+    
     def api_search(self):
         from urllib.parse import urlparse, parse_qs
         query = parse_qs(urlparse(self.path).query)
         q = query.get('q', [''])[0]
         return self.monitor.search_resources(q)
+    
     def api_run_diagnostics(self):
         return self.monitor.run_diagnostics()
+    
     def api_run_repair(self, target=None):
         return self.monitor.run_repair(target)
+    
     def api_execute_action(self, params):
         return self.monitor.execute_action(
             params.get('resource_type', ''),
@@ -1247,6 +1399,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             params.get('action', ''),
             params
         )
+    
     def api_acknowledge_alert(self, params):
         alert_id = params.get('alert_id', '')
         for alert in self.monitor.alerts:
@@ -1254,6 +1407,45 @@ class APIHandler(SimpleHTTPRequestHandler):
                 alert['acknowledged'] = True
                 return {'acknowledged': True}
         return {'acknowledged': False, 'error': 'Alert not found'}
+    
+    # ---- TERMINAL API ----
+    def api_terminal(self, params):
+        """Execute a terminal command and return output"""
+        command = params.get('command', '')
+        if not command:
+            return {'error': 'No command provided'}
+        
+        # Whitelist of safe commands
+        safe_commands = [
+            'ping', 'kubectl', 'virsh', 'docker', 'systemctl', 
+            'ps', 'top', 'df', 'free', 'netstat', 'ss', 'ip', 
+            'ifconfig', 'route', 'nslookup', 'dig', 'curl', 'hostname',
+            'whoami', 'date', 'uptime', 'uname', 'cat', 'echo',
+            'k3s', 'kubectl', 'helm'
+        ]
+        
+        # Check if command is safe
+        cmd_parts = command.split()
+        if cmd_parts and cmd_parts[0] not in safe_commands:
+            return {'error': f'Command "{cmd_parts[0]}" is not allowed. Allowed: {", ".join(safe_commands)}'}
+        
+        try:
+            result = subprocess.run(
+                command, 
+                shell=True, 
+                capture_output=True, 
+                text=True,
+                timeout=30
+            )
+            output = result.stdout + result.stderr
+            return {
+                'output': output,
+                'exit_code': result.returncode
+            }
+        except subprocess.TimeoutExpired:
+            return {'error': 'Command timed out after 30 seconds'}
+        except Exception as e:
+            return {'error': str(e)}
 
 
 # ============================================================
