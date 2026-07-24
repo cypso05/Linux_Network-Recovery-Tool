@@ -74,7 +74,7 @@ class UniversalVMDetector:
     def __init__(self):
         self.detected_hypervisors = {}
         self.vm_cache = {}
-        self.cache_ttl = 30
+        self.cache_ttl = 90
         self.false_positive_patterns = [
             r'debug-threads',
             r'guest\+',
