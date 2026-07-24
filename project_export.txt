@@ -1,6 +1,6 @@
 ﻿========================================
 PROJECT EXPORT
-Generated: 2026-07-24 10:26:17
+Generated: 2026-07-24 12:16:01
 
 Input Paths:
 F:\Linux_Network_Manager\network-recover
@@ -1089,21 +1089,21 @@ check_routing() {
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\install.sh
 FULL PATH: F:\Linux_Network_Manager\network-recover\install.sh
-SIZE: 21.6 KB
-LAST MODIFIED: 07/24/2026 08:56:45
+SIZE: 28.67 KB
+LAST MODIFIED: 07/24/2026 11:50:51
 ----------------------------------------
 
 #!/bin/bash
 #===============================================================================
 # Network Recovery Tool - Installer
-# Version: 1.1.1
+# Version: 1.1.2
 # Installs the tool, GUI wrapper, web interface, modular components, 
-# XFCE integration, icons, and polkit rules
+# XFCE integration, icons, polkit rules, and Python dependencies
 #===============================================================================
 
 set -euo pipefail
 
-readonly APP_VERSION="1.1.1"
+readonly APP_VERSION="1.1.2"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BIN_DIR="/usr/local/bin"
 readonly LIB_DIR="/usr/local/lib/network-recover"
@@ -1178,6 +1178,7 @@ if [[ "$UNINSTALL" == "true" ]]; then
     rm -f "$BIN_DIR/network-recover" && echo "  âœ… Removed: $BIN_DIR/network-recover" || echo "  âš ï¸  Not found: $BIN_DIR/network-recover"
     rm -f "$BIN_DIR/network-recover-gui" && echo "  âœ… Removed: $BIN_DIR/network-recover-gui" || echo "  âš ï¸  Not found: $BIN_DIR/network-recover-gui"
     rm -f "$BIN_DIR/network-recover-web" && echo "  âœ… Removed: $BIN_DIR/network-recover-web" || echo "  âš ï¸  Not found: $BIN_DIR/network-recover-web"
+    rm -f "$BIN_DIR/network-recover-dashboard" && echo "  âœ… Removed: $BIN_DIR/network-recover-dashboard" || echo "  âš ï¸  Not found: $BIN_DIR/network-recover-dashboard"
     
     echo "ðŸ“Œ Removing desktop entry..."
     rm -f "$APP_DIR/network-recover.desktop" && echo "  âœ… Removed: $APP_DIR/network-recover.desktop" || echo "  âš ï¸  Not found"
@@ -1243,14 +1244,16 @@ detect_distro() {
 DISTRO=$(detect_distro)
 echo -e "${GREEN}âœ… Detected distribution: $DISTRO${NC}"
 
-# Step 1: Install dependencies
+#===============================================================================
+# STEP 1: Install system dependencies
+#===============================================================================
 if [[ "$SKIP_DEPS" != "true" ]]; then
     echo ""
-    echo "ðŸ“¦ Installing dependencies..."
+    echo "ðŸ“¦ Installing system dependencies..."
     
     install_deps_debian() {
         apt-get update -qq
-        local deps="curl iproute2 bridge-utils ethtool netcat-openbsd dnsutils network-manager policykit-1 python3"
+        local deps="curl iproute2 bridge-utils ethtool netcat-openbsd dnsutils network-manager policykit-1 python3 python3-pip"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify-bin"
         fi
@@ -1258,7 +1261,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
     }
     
     install_deps_rhel() {
-        local deps="curl iproute bridge-utils ethtool nmap-ncat bind-utils NetworkManager polkit python3"
+        local deps="curl iproute bridge-utils ethtool nmap-ncat bind-utils NetworkManager polkit python3 python3-pip"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify"
         fi
@@ -1266,7 +1269,7 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
     }
     
     install_deps_arch() {
-        local deps="curl iproute2 bridge-utils ethtool openbsd-netcat bind networkmanager polkit python"
+        local deps="curl iproute2 bridge-utils ethtool openbsd-netcat bind networkmanager polkit python python-pip"
         if [[ "$NO_GUI" != "true" ]]; then
             deps="$deps zenity libnotify"
         fi
@@ -1285,26 +1288,112 @@ if [[ "$SKIP_DEPS" != "true" ]]; then
             ;;
         *)
             echo -e "${YELLOW}âš ï¸  Unknown distribution - please install dependencies manually:${NC}"
-            echo "   core: curl, iproute2, bridge-utils, ethtool, netcat, dnsutils, network-manager, polkit, python3"
+            echo "   core: curl, iproute2, bridge-utils, ethtool, netcat, dnsutils, network-manager, polkit, python3, python3-pip"
             if [[ "$NO_GUI" != "true" ]]; then
                 echo "   gui:  zenity, libnotify"
             fi
             ;;
     esac
     
-    echo -e "${GREEN}âœ… Dependencies installed${NC}"
+    echo -e "${GREEN}âœ… System dependencies installed${NC}"
+
+    # ------------------------------------------------------------------
+    # STEP 1.5: Install Python dependencies for web server
+    # ------------------------------------------------------------------
+    echo ""
+    echo "ðŸ Installing Python dependencies..."
+
+    py_module_available() {
+        python3 -c "import $1" 2>/dev/null && return 0 || return 1
+    }
+
+    PYTHON_DEPS_MISSING=false
+
+    # --- psutil ---
+    if py_module_available "psutil"; then
+        echo "  âœ… psutil already installed"
+    else
+        echo "  ðŸ“¦ Installing psutil..."
+        PSUTIL_INSTALLED=false
+        
+        case "$DISTRO" in
+            debian|ubuntu|mx|linuxmint|pop)
+                apt-get install -y -qq python3-psutil 2>/dev/null && PSUTIL_INSTALLED=true
+                ;;
+            fedora|rhel|centos|rocky|alma)
+                dnf install -y python3-psutil 2>/dev/null && PSUTIL_INSTALLED=true
+                ;;
+            arch|manjaro|endeavouros)
+                pacman -S --noconfirm python-psutil 2>/dev/null && PSUTIL_INSTALLED=true
+                ;;
+        esac
+        
+        if [[ "$PSUTIL_INSTALLED" != "true" ]]; then
+            pip3 install psutil 2>/dev/null && PSUTIL_INSTALLED=true
+        fi
+        
+        if py_module_available "psutil"; then
+            echo "  âœ… psutil installed successfully"
+        else
+            echo "  âš ï¸  psutil installation failed - VM metrics will be limited"
+            PYTHON_DEPS_MISSING=true
+        fi
+    fi
+
+    # --- websockets ---
+    if py_module_available "websockets"; then
+        echo "  âœ… websockets already installed"
+    else
+        echo "  ðŸ“¦ Installing websockets..."
+        WEBSOCKETS_INSTALLED=false
+        
+        case "$DISTRO" in
+            debian|ubuntu|mx|linuxmint|pop)
+                apt-get install -y -qq python3-websockets 2>/dev/null && WEBSOCKETS_INSTALLED=true
+                ;;
+            fedora|rhel|centos|rocky|alma)
+                dnf install -y python3-websockets 2>/dev/null && WEBSOCKETS_INSTALLED=true
+                ;;
+            arch|manjaro|endeavouros)
+                pacman -S --noconfirm python-websockets 2>/dev/null && WEBSOCKETS_INSTALLED=true
+                ;;
+        esac
+        
+        if [[ "$WEBSOCKETS_INSTALLED" != "true" ]]; then
+            pip3 install websockets 2>/dev/null && WEBSOCKETS_INSTALLED=true
+        fi
+        
+        if py_module_available "websockets"; then
+            echo "  âœ… websockets installed successfully"
+        else
+            echo "  âš ï¸  websockets installation failed - real-time updates disabled"
+            PYTHON_DEPS_MISSING=true
+        fi
+    fi
+
+    echo ""
+    if [[ "$PYTHON_DEPS_MISSING" == "true" ]]; then
+        echo -e "${YELLOW}âš ï¸  Some Python dependencies are missing.${NC}"
+    else
+        echo -e "${GREEN}âœ… All Python dependencies installed${NC}"
+    fi
+
 else
     echo -e "${YELLOW}âš ï¸  Skipping dependency installation${NC}"
 fi
 
-# Step 2: Create directories
+#===============================================================================
+# STEP 2: Create directories
+#===============================================================================
 echo ""
 echo "ðŸ“ Creating directories..."
 mkdir -p "$LOG_DIR" "$SNAPSHOT_DIR"
 chmod 755 "$LOG_DIR" "$SNAPSHOT_DIR"
 echo -e "${GREEN}âœ… Directories created${NC}"
 
-# Step 3: Install core engine
+#===============================================================================
+# STEP 3: Install core engine
+#===============================================================================
 echo ""
 echo "ðŸ“‹ Installing core engine..."
 if [[ -f "$SCRIPT_DIR/src/network-recover" ]]; then
@@ -1316,7 +1405,9 @@ else
     exit 1
 fi
 
-# Step 4: Install GUI wrapper
+#===============================================================================
+# STEP 4: Install GUI wrapper
+#===============================================================================
 if [[ "$NO_GUI" != "true" ]]; then
     echo ""
     echo "ðŸ–¥ï¸  Installing GUI wrapper..."
@@ -1331,7 +1422,22 @@ else
     echo -e "${YELLOW}âš ï¸  Skipping GUI installation (--no-gui)${NC}"
 fi
 
-# Step 5: Install modular components
+#===============================================================================
+# STEP 4.5: Install dashboard script
+#===============================================================================
+echo ""
+echo "ðŸ“Š Installing dashboard script..."
+if [[ -f "$SCRIPT_DIR/src/network-recover-dashboard" ]]; then
+    cp "$SCRIPT_DIR/src/network-recover-dashboard" "$BIN_DIR/network-recover-dashboard"
+    chmod 755 "$BIN_DIR/network-recover-dashboard"
+    echo -e "${GREEN}âœ… Dashboard script installed to $BIN_DIR/network-recover-dashboard${NC}"
+else
+    echo -e "${YELLOW}âš ï¸  Dashboard script not found - skipping${NC}"
+fi
+
+#===============================================================================
+# STEP 5: Install modular components
+#===============================================================================
 echo ""
 echo "ðŸ“‹ Installing modular components..."
 mkdir -p "$LIB_DIR"
@@ -1380,7 +1486,9 @@ else
     echo -e "${YELLOW}âš ï¸  No modular components found - core engine is self-contained${NC}"
 fi
 
-# Step 5.5: Install icons
+#===============================================================================
+# STEP 5.5: Install icons
+#===============================================================================
 echo ""
 echo "ðŸŽ¨ Installing icons..."
 
@@ -1388,21 +1496,18 @@ ICON_SOURCE="$SCRIPT_DIR/icons"
 ICON_DEST="/usr/share/icons/hicolor"
 
 if [[ -d "$ICON_SOURCE" ]]; then
-    # Install scalable icon
     if [[ -f "$ICON_SOURCE/network-recover.svg" ]]; then
         mkdir -p "$ICON_DEST/scalable/apps"
         cp "$ICON_SOURCE/network-recover.svg" "$ICON_DEST/scalable/apps/"
         echo "  âœ… SVG icon installed"
     fi
     
-    # Install 48x48 icon
     if [[ -f "$ICON_SOURCE/network-recover.png" ]]; then
         mkdir -p "$ICON_DEST/48x48/apps"
         cp "$ICON_SOURCE/network-recover.png" "$ICON_DEST/48x48/apps/"
         echo "  âœ… PNG icon installed"
     fi
     
-    # Update icon cache
     if command -v update-icon-caches &>/dev/null; then
         update-icon-caches /usr/share/icons/hicolor/
         echo "  âœ… Icon cache updated"
@@ -1411,16 +1516,16 @@ else
     echo "  âš ï¸  icons/ folder not found - using system icons"
 fi
 
-# Step 5.6: Install web application
+#===============================================================================
+# STEP 5.6: Install web application
+#===============================================================================
 if [[ "$NO_GUI" != "true" ]]; then
     echo ""
     echo "ðŸŒ Installing web application..."
     
-    # Create web directory
     mkdir -p "$LIB_DIR/web"
     mkdir -p "$LIB_DIR/web/static"
     
-    # Copy web server
     if [[ -f "$SCRIPT_DIR/web/server.py" ]]; then
         cp "$SCRIPT_DIR/web/server.py" "$LIB_DIR/web/"
         chmod 755 "$LIB_DIR/web/server.py"
@@ -1429,7 +1534,6 @@ if [[ "$NO_GUI" != "true" ]]; then
         echo "  âš ï¸  web/server.py not found - skipping"
     fi
     
-    # Copy static files
     if [[ -d "$SCRIPT_DIR/web/static" ]]; then
         cp -r "$SCRIPT_DIR/web/static"/* "$LIB_DIR/web/static/"
         echo "  âœ… Web UI files installed"
@@ -1437,7 +1541,6 @@ if [[ "$NO_GUI" != "true" ]]; then
         echo "  âš ï¸  web/static/ not found - skipping"
     fi
     
-    # Install web launcher
     if [[ -f "$SCRIPT_DIR/src/network-recover-web" ]]; then
         cp "$SCRIPT_DIR/src/network-recover-web" "$BIN_DIR/network-recover-web"
         chmod 755 "$BIN_DIR/network-recover-web"
@@ -1451,10 +1554,12 @@ else
     echo -e "${YELLOW}âš ï¸  Skipping web application installation (--no-gui)${NC}"
 fi
 
-# Step 5.7: Remove BOM from installed scripts (fix for Linux build issue)
+#===============================================================================
+# STEP 5.7: Remove BOM from scripts
+#===============================================================================
 echo ""
 echo "ðŸ”§ Removing BOM from scripts..."
-for file in "$BIN_DIR/network-recover" "$BIN_DIR/network-recover-gui" "$BIN_DIR/network-recover-web"; do
+for file in "$BIN_DIR/network-recover" "$BIN_DIR/network-recover-gui" "$BIN_DIR/network-recover-web" "$BIN_DIR/network-recover-dashboard"; do
     if [[ -f "$file" ]]; then
         sed -i '1s/^\xEF\xBB\xBF//' "$file" 2>/dev/null
         echo "  âœ… Cleaned: $(basename "$file")"
@@ -1462,7 +1567,9 @@ for file in "$BIN_DIR/network-recover" "$BIN_DIR/network-recover-gui" "$BIN_DIR/
 done
 echo -e "${GREEN}âœ… BOM cleanup complete${NC}"
 
-# Step 6: Install desktop entry
+#===============================================================================
+# STEP 6: Install desktop entry
+#===============================================================================
 echo ""
 echo "ðŸ“± Installing desktop entry..."
 if [[ -f "$SCRIPT_DIR/desktop/network-recover.desktop" ]]; then
@@ -1470,7 +1577,6 @@ if [[ -f "$SCRIPT_DIR/desktop/network-recover.desktop" ]]; then
     chmod 644 "$APP_DIR/network-recover.desktop"
     echo -e "${GREEN}âœ… Desktop entry installed${NC}"
 else
-    # Create it from scratch if missing
     cat > "$APP_DIR/network-recover.desktop" << 'EOF'
 [Desktop Entry]
 Version=1.0
@@ -1516,7 +1622,9 @@ EOF
     echo -e "${GREEN}âœ… Desktop entry created${NC}"
 fi
 
-# Step 7: Install polkit policy
+#===============================================================================
+# STEP 7: Install polkit policy
+#===============================================================================
 echo ""
 echo "ðŸ” Installing polkit policy..."
 cat > "$POLKIT_DIR/com.network-recover.policy" << 'EOF'
@@ -1549,12 +1657,26 @@ cat > "$POLKIT_DIR/com.network-recover.policy" << 'EOF'
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/network-recover-gui</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
+  <action id="com.network-recover.web">
+    <description>Run network diagnostics and repair (Web UI)</description>
+    <message>Authentication is required to diagnose and repair network connectivity</message>
+    <icon_name>network-recover</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/network-recover-web</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
 </policyconfig>
 EOF
 chmod 644 "$POLKIT_DIR/com.network-recover.policy"
 echo -e "${GREEN}âœ… Polkit policy installed${NC}"
 
-# Step 8: XFCE panel integration
+#===============================================================================
+# STEP 8: XFCE panel integration
+#===============================================================================
 echo ""
 echo "ðŸ”§ Setting up XFCE panel integration..."
 
@@ -1588,13 +1710,17 @@ setup_xfce_panel() {
 
 setup_xfce_panel
 
-# Step 9: Update desktop database
+#===============================================================================
+# STEP 9: Update desktop database
+#===============================================================================
 echo ""
 echo "ðŸ”„ Updating desktop database..."
 update-desktop-database "$APP_DIR" 2>/dev/null || true
 echo -e "${GREEN}âœ… Done${NC}"
 
-# Step 9.5: Refresh XFCE panel cache (fix for right-click actions)
+#===============================================================================
+# STEP 9.5: Refresh XFCE panel cache
+#===============================================================================
 echo ""
 echo "ðŸ”„ Refreshing XFCE panel..."
 if pgrep -x "xfce4-panel" > /dev/null; then
@@ -1613,7 +1739,9 @@ else
 fi
 echo -e "${GREEN}âœ… Panel refresh complete${NC}"
 
-# Step 10: Verify installation
+#===============================================================================
+# STEP 10: Verify installation
+#===============================================================================
 echo ""
 echo "=============================================="
 echo "    VERIFYING INSTALLATION"
@@ -1635,6 +1763,13 @@ if [[ -x "$BIN_DIR/network-recover-gui" ]]; then
     echo -e "  âœ… GUI wrapper: $BIN_DIR/network-recover-gui"
 else
     echo -e "  âš ï¸  GUI wrapper: missing (optional)"
+fi
+
+# Dashboard script
+if [[ -x "$BIN_DIR/network-recover-dashboard" ]]; then
+    echo -e "  âœ… Dashboard: $BIN_DIR/network-recover-dashboard"
+else
+    echo -e "  âš ï¸  Dashboard: missing (optional)"
 fi
 
 # Web launcher
@@ -1674,6 +1809,20 @@ if [[ -d "$LIB_DIR/collectors" ]]; then
     echo -e "  âœ… Collectors: $(ls -1 "$LIB_DIR/collectors" 2>/dev/null | wc -l) modules"
 else
     echo -e "  âš ï¸  Collectors: not installed (core engine is self-contained)"
+fi
+
+# Python dependencies
+echo ""
+echo "  Python modules:"
+if python3 -c "import psutil" 2>/dev/null; then
+    echo -e "  âœ… psutil available"
+else
+    echo -e "  âš ï¸  psutil NOT available"
+fi
+if python3 -c "import websockets" 2>/dev/null; then
+    echo -e "  âœ… websockets available"
+else
+    echo -e "  âš ï¸  websockets NOT available"
 fi
 
 # Desktop entry
@@ -1722,30 +1871,37 @@ fi
 
 echo ""
 
+#===============================================================================
+# FINAL SUMMARY
+#===============================================================================
 if [[ "$VERIFY_OK" == "true" ]]; then
     echo "=============================================="
     echo "  âœ… INSTALLATION COMPLETE!"
     echo "=============================================="
     echo ""
     echo "  Quick commands:"
+    echo "    sudo network-recover status"
     echo "    sudo network-recover diagnose"
     echo "    sudo network-recover repair"
-    echo "    sudo network-recover status"
     echo "    sudo network-recover snapshot"
     echo "    sudo network-recover watch"
+    echo "    network-recover-dashboard"
     echo ""
     echo "  Web Interface:"
     echo "    /usr/local/bin/network-recover-web"
-    echo "    Or use the desktop launcher"
+    echo "    http://localhost:9876"
     echo ""
-    echo "  To add the panel launcher:"
-    echo "    Right-click panel â†’ Panel â†’ Add New Items"
-    echo "    Look for 'Network Recovery Tool'"
+    echo "  GUI (Zenity):"
+    echo "    /usr/local/bin/network-recover-gui"
     echo ""
-    echo "  Or run from terminal:"
-    echo "    /usr/local/bin/network-recover-gui  (Zenity)"
-    echo "    /usr/local/bin/network-recover-web  (Web UI)"
-    echo ""
+    echo "  Right-click the launcher for quick actions:"
+    echo "    ðŸ” Diagnose Network"
+    echo "    ðŸ”§ Repair Network"
+    echo "    ðŸ“Š Network Status"
+    echo "    ðŸ’¾ Save Snapshot"
+    echo "    ðŸ“¡ Monitor Network"
+    echo "    ðŸŒ Open Web UI"
+    echo "=============================================="
 else
     echo "=============================================="
     echo "  âš ï¸  INSTALLATION COMPLETED WITH WARNINGS"
@@ -5134,263 +5290,1481 @@ fi
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\web\server.py
 FULL PATH: F:\Linux_Network_Manager\network-recover\web\server.py
-SIZE: 9.81 KB
-LAST MODIFIED: 07/24/2026 10:01:17
+SIZE: 59.56 KB
+LAST MODIFIED: 07/24/2026 12:04:45
 ----------------------------------------
 
 #!/usr/bin/env python3
-"""Network Recovery Tool - Web Backend (Async, Thread-Safe, Low-Memory)"""
+"""
+Infrastructure Operations Center v3.0.0 - Three-Pane Operations Console
+Full WebSocket-enabled server with automation engine, job queue, and timeline
+"""
 
-import http.server
+import asyncio
 import json
 import subprocess
-import os
-import sys
-import argparse
-import threading
 import time
-import logging
+import os
+import threading
+from datetime import datetime, timedelta
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import websockets
+import socket
+import psutil
+import re
+from collections import deque
+import hashlib
 
 # Configuration
-WEB_DIR = Path(__file__).parent
-STATIC_DIR = WEB_DIR / "static"
-NETWORK_RECOVER = "/usr/local/bin/network-recover"
-DASHBOARD_CMD = "/usr/local/bin/network-recover-dashboard"
+HOST = '0.0.0.0'
+HTTP_PORT = 9876
+WS_PORT = 9877
+STATIC_DIR = Path(__file__).parent / 'static'
 
-# Limit threads on low-end devices (1-2GB RAM)
-MAX_WORKERS = int(os.environ.get("NRT_WORKERS", "2"))
-CMD_TIMEOUT = int(os.environ.get("NRT_CMD_TIMEOUT", "60"))
-DASHBOARD_TIMEOUT = int(os.environ.get("NRT_DASHBOARD_TIMEOUT", "30"))
+# ============================================================
+# AUTOMATION ENGINE
+# ============================================================
 
-# Thread pool shared across all requests
-executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-
-# Cache for dashboard data (avoid hammering SSH on refreshes)
-_dashboard_cache = {"data": None, "timestamp": 0, "ttl": 30}
-_cache_lock = threading.Lock()
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger("nrt-web")
-
-
-class APIHandler(http.server.SimpleHTTPRequestHandler):
-    """HTTP handler that delegates work to a thread pool."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
-
-    # ------------------------------------------------------------------
-    # Routing - GET
-    # ------------------------------------------------------------------
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        if path == "/api/status":
-            self.submit_async(["status"])
-        elif path == "/api/diagnose":
-            self.submit_async(["diagnose"])
-        elif path == "/api/repair":
-            self.submit_async(["repair"])
-        elif path == "/api/snapshot":
-            self.submit_async(["snapshot"])
-        elif path == "/api/dashboard":
-            self.submit_dashboard()
-        elif path == "/api/dashboard/refresh":
-            self.submit_dashboard(force_refresh=True)
-        elif path == "/api/health":
-            self.health_check()
-        else:
-            super().do_GET()
-
-    # ------------------------------------------------------------------
-    # Routing - POST
-    # ------------------------------------------------------------------
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        if path == "/api/action":
-            content_length = int(self.headers.get('Content-Length', 0))
-            if content_length > 1024:
-                self.json_response({"ok": False, "error": "Payload too large"})
-                return
-            post_data = self.rfile.read(content_length)
-            try:
-                data = json.loads(post_data.decode('utf-8'))
-                action = data.get('action', 'status')
-                if action == 'dashboard':
-                    self.submit_dashboard(force_refresh=True)
-                else:
-                    self.submit_async([action])
-            except json.JSONDecodeError:
-                self.json_response({"ok": False, "error": "Invalid JSON"})
-            except Exception as e:
-                self.json_response({"ok": False, "error": str(e)})
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    # ------------------------------------------------------------------
-    # Async submission helpers
-    # ------------------------------------------------------------------
-    def submit_async(self, args):
-        """Run a command in the thread pool and respond when done."""
-        future = executor.submit(self._run_cmd_sync, args)
-        try:
-            result = future.result(timeout=CMD_TIMEOUT + 5)
-            self.json_response(result)
-        except FutureTimeoutError:
-            self.json_response({"ok": False, "error": "Request timed out"})
-
-    def submit_dashboard(self, force_refresh=False):
-        """Fetch dashboard data, using cache when possible."""
-        if not force_refresh:
-            with _cache_lock:
-                if (_dashboard_cache["data"] is not None and
-                        time.time() - _dashboard_cache["timestamp"] < _dashboard_cache["ttl"]):
-                    logger.debug("Dashboard served from cache")
-                    self.json_response(_dashboard_cache["data"])
-                    return
-
-        future = executor.submit(self._run_dashboard_sync)
-        try:
-            result = future.result(timeout=DASHBOARD_TIMEOUT + 5)
-            with _cache_lock:
-                _dashboard_cache["data"] = result
-                _dashboard_cache["timestamp"] = time.time()
-            self.json_response(result)
-        except FutureTimeoutError:
-            self.json_response({"ok": False, "error": "Dashboard request timed out"})
-
-    def health_check(self):
-        """Lightweight health endpoint."""
-        pending = executor._work_queue.qsize() if hasattr(executor, '_work_queue') else 0
-        self.json_response({
-            "ok": True,
-            "workers": MAX_WORKERS,
-            "pending": pending,
-            "cache_age": int(time.time() - _dashboard_cache["timestamp"]) if _dashboard_cache["data"] else 0,
-            "cache_ttl": _dashboard_cache["ttl"]
-        })
-
-    # ------------------------------------------------------------------
-    # Synchronous work (runs in thread pool)
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _run_cmd_sync(args):
-        try:
-            cmd = ["sudo", NETWORK_RECOVER] + args
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=CMD_TIMEOUT
-            )
-            output = result.stdout
-            if result.stderr:
-                output += "\n" + result.stderr
-            return {
-                "ok": result.returncode == 0,
-                "output": output,
-                "exit_code": result.returncode
-            }
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "Command timed out after " + str(CMD_TIMEOUT) + "s"}
-        except Exception as e:
-            logger.error("run_cmd failed: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    @staticmethod
-    def _run_dashboard_sync():
-        if not os.path.exists(DASHBOARD_CMD):
-            return {
-                "ok": False,
-                "error": "Dashboard script not installed. Run: sudo cp src/network-recover-dashboard " + DASHBOARD_CMD
-            }
-        try:
-            result = subprocess.run(
-                ["sudo", DASHBOARD_CMD, "json"],
-                capture_output=True,
-                text=True,
-                timeout=DASHBOARD_TIMEOUT
-            )
-            if result.returncode != 0:
-                return {
-                    "ok": False,
-                    "error": "Dashboard command failed",
-                    "output": result.stderr
-                }
-            try:
-                data = json.loads(result.stdout)
-                data["ok"] = True
-                return data
-            except json.JSONDecodeError:
-                return {
-                    "ok": False,
-                    "error": "Invalid JSON from dashboard",
-                    "raw_output": result.stdout[:500]
-                }
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "Dashboard timed out after " + str(DASHBOARD_TIMEOUT) + "s"}
-        except Exception as e:
-            logger.error("Dashboard failed: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    # ------------------------------------------------------------------
-    # Response helpers
-    # ------------------------------------------------------------------
-    def json_response(self, data):
-        body = json.dumps(data).encode('utf-8')
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        logger.info("%s - %s", self.client_address[0], format % args)
-
-
-def main():
-    # IMPORTANT: Global declarations MUST be at the top of the function
-    global MAX_WORKERS
-    global executor
+class AutomationEngine:
+    """Rule-based automation engine with job queue tracking"""
     
-    parser = argparse.ArgumentParser(description="Network Recovery Tool - Web Server")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("NRT_PORT", "9876")))
-    parser.add_argument("--host", type=str, default=os.environ.get("NRT_HOST", "0.0.0.0"))
-    parser.add_argument("--workers", type=int, default=MAX_WORKERS,
-                        help="Thread pool size (default: 2, ideal for 1-2GB RAM)")
-    args = parser.parse_args()
+    def __init__(self):
+        self.automations = []
+        self.job_queue = deque()
+        self.completed_jobs = deque(maxlen=100)
+        self.running_jobs = {}
+        
+    def add_automation(self, name, trigger, actions):
+        """Register an automation rule"""
+        self.automations.append({
+            'name': name,
+            'trigger': trigger,
+            'actions': actions,
+            'enabled': True
+        })
+    
+    def run_job(self, job_id, job_type, target, steps):
+        """Execute a job with full tracking and status updates"""
+        job = {
+            'id': job_id,
+            'type': job_type,
+            'target': target,
+            'status': 'queued',
+            'steps': steps,
+            'current_step': 0,
+            'total_steps': len(steps),
+            'start_time': datetime.now().isoformat(),
+            'end_time': None,
+            'log': [],
+            'progress': 0
+        }
+        self.job_queue.append(job)
+        self.running_jobs[job_id] = job
+        return job
+    
+    def process_jobs(self):
+        """Process queued jobs - call this in a loop"""
+        jobs_processed = []
+        while self.job_queue:
+            job = self.job_queue.popleft()
+            job['status'] = 'running'
+            
+            for i, step in enumerate(job['steps']):
+                job['current_step'] = i
+                job['progress'] = int((i / job['total_steps']) * 100)
+                step_name = step.get('name', f'Step {i+1}')
+                job['log'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'message': f"Running: {step_name}",
+                    'level': 'info'
+                })
+                
+                try:
+                    if step['type'] == 'command':
+                        result = subprocess.run(
+                            step['command'], 
+                            shell=True, 
+                            capture_output=True, 
+                            text=True,
+                            timeout=step.get('timeout', 30)
+                        )
+                        if result.returncode == 0:
+                            job['log'].append({
+                                'timestamp': datetime.now().isoformat(),
+                                'message': f"âœ“ {step_name} completed",
+                                'level': 'success',
+                                'output': result.stdout[:500]
+                            })
+                        else:
+                            job['log'].append({
+                                'timestamp': datetime.now().isoformat(),
+                                'message': f"âœ— {step_name} failed: {result.stderr[:200]}",
+                                'level': 'error',
+                                'output': result.stderr[:500]
+                            })
+                            if step.get('on_failure') == 'stop':
+                                job['status'] = 'failed'
+                                job['end_time'] = datetime.now().isoformat()
+                                jobs_processed.append(job)
+                                self.completed_jobs.appendleft(job)
+                                if job_id in self.running_jobs:
+                                    del self.running_jobs[job_id]
+                                return jobs_processed
+                    elif step['type'] == 'sleep':
+                        time.sleep(step['duration'])
+                        job['log'].append({
+                            'timestamp': datetime.now().isoformat(),
+                            'message': f"Waited {step['duration']}s",
+                            'level': 'info'
+                        })
+                    elif step['type'] == 'verify':
+                        result = subprocess.run(
+                            step['command'],
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=step.get('timeout', 30)
+                        )
+                        passed = result.returncode == 0
+                        job['log'].append({
+                            'timestamp': datetime.now().isoformat(),
+                            'message': f"Verification: {'PASS' if passed else 'FAIL'}",
+                            'level': 'success' if passed else 'warning'
+                        })
+                except subprocess.TimeoutExpired:
+                    job['log'].append({
+                        'timestamp': datetime.now().isoformat(),
+                        'message': f"âœ— Timeout: {step_name}",
+                        'level': 'error'
+                    })
+                    if step.get('on_failure') == 'stop':
+                        job['status'] = 'failed'
+                        job['end_time'] = datetime.now().isoformat()
+                        jobs_processed.append(job)
+                        self.completed_jobs.appendleft(job)
+                        if job_id in self.running_jobs:
+                            del self.running_jobs[job_id]
+                        return jobs_processed
+                except Exception as e:
+                    job['log'].append({
+                        'timestamp': datetime.now().isoformat(),
+                        'message': f"âœ— Error: {str(e)}",
+                        'level': 'error'
+                    })
+                    if step.get('on_failure') == 'stop':
+                        job['status'] = 'failed'
+                        job['end_time'] = datetime.now().isoformat()
+                        jobs_processed.append(job)
+                        self.completed_jobs.appendleft(job)
+                        if job_id in self.running_jobs:
+                            del self.running_jobs[job_id]
+                        return jobs_processed
+            
+            job['status'] = 'completed'
+            job['progress'] = 100
+            job['end_time'] = datetime.now().isoformat()
+            job['log'].append({
+                'timestamp': datetime.now().isoformat(),
+                'message': 'âœ“ Job completed successfully',
+                'level': 'success'
+            })
+            jobs_processed.append(job)
+            self.completed_jobs.appendleft(job)
+            if job_id in self.running_jobs:
+                del self.running_jobs[job_id]
+        
+        return jobs_processed
+    
+    def get_job_status(self, job_id):
+        """Get status of a specific job"""
+        if job_id in self.running_jobs:
+            return self.running_jobs[job_id]
+        for job in self.completed_jobs:
+            if job['id'] == job_id:
+                return job
+        return None
 
-    MAX_WORKERS = args.workers
 
-    # Recreate executor with configured worker count
-    executor.shutdown(wait=False)
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+# ============================================================
+# INFRASTRUCTURE MONITOR
+# ============================================================
 
-    server = http.server.HTTPServer((args.host, args.port), APIHandler)
+class InfrastructureMonitor:
+    """Complete monitoring engine with metrics, events, timeline, and automation"""
+    
+    def __init__(self):
+        self.automation = AutomationEngine()
+        self.metrics_history = deque(maxlen=3600)  # 1 hour of 1-second data
+        self.events = deque(maxlen=1000)
+        self.alerts = []
+        self.audit_log = deque(maxlen=10000)
+        self.timeline = deque(maxlen=500)
+        self.last_update = time.time()
+        
+        # Initialize default automations
+        self._init_automations()
+        
+        # Start background tasks
+        threading.Thread(target=self._collect_metrics_loop, daemon=True).start()
+        threading.Thread(target=self._process_jobs_loop, daemon=True).start()
+    
+    def _init_automations(self):
+        """Set up default automation rules"""
+        self.automation.add_automation(
+            "Pod CrashLoop Recovery",
+            {"type": "pod_status", "condition": "CrashLoopBackOff"},
+            [
+                {"name": "Restart pod", "type": "command", "command": "kubectl delete pod {target}"},
+                {"name": "Wait for restart", "type": "sleep", "duration": 30},
+                {"name": "Check status", "type": "verify", "command": "kubectl get pod {target} -o jsonpath='{.status.phase}' | grep Running"}
+            ]
+        )
+        
+        self.automation.add_automation(
+            "VM Recovery",
+            {"type": "vm_status", "condition": "unreachable"},
+            [
+                {"name": "Ping test", "type": "command", "command": "ping -c 3 {target}"},
+                {"name": "SSH test", "type": "command", "command": "ssh -o ConnectTimeout=5 {target} echo ok"},
+                {"name": "Restart networking", "type": "command", "command": "ssh {target} 'systemctl restart networking'", "on_failure": "continue"},
+                {"name": "Wait", "type": "sleep", "duration": 10},
+                {"name": "Reboot VM", "type": "command", "command": "virsh reboot {target}", "on_failure": "continue"}
+            ]
+        )
+    
+    def _collect_metrics_loop(self):
+        """Continuously collect metrics every second"""
+        while True:
+            try:
+                metrics = self.get_system_metrics()
+                self.metrics_history.append(metrics)
+                self.last_update = time.time()
+                time.sleep(1)
+            except:
+                time.sleep(5)
+    
+    def _process_jobs_loop(self):
+        """Process automation jobs"""
+        while True:
+            try:
+                self.automation.process_jobs()
+                time.sleep(1)
+            except:
+                time.sleep(5)
+    
+    # ---- System Metrics ----
+    
+    def get_system_metrics(self):
+        """Get comprehensive system metrics"""
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        net = psutil.net_io_counters()
+        
+        return {
+            'timestamp': datetime.now().isoformat(),
+            'cpu': cpu_percent,
+            'ram': mem.percent,
+            'ram_used_gb': round(mem.used / (1024**3), 1),
+            'ram_total_gb': round(mem.total / (1024**3), 1),
+            'disk': disk.percent,
+            'disk_used_gb': round(disk.used / (1024**3), 1),
+            'disk_total_gb': round(disk.total / (1024**3), 1),
+            'network_rx_bytes': net.bytes_recv,
+            'network_tx_bytes': net.bytes_sent,
+            'network_rx_mbps': 0,  # Calculated over time
+            'network_tx_mbps': 0,
+            'load_avg_1m': psutil.getloadavg()[0],
+            'load_avg_5m': psutil.getloadavg()[1],
+            'load_avg_15m': psutil.getloadavg()[2],
+            'processes': len(psutil.pids()),
+            'swap': psutil.swap_memory().percent
+        }
+    
+    def get_metrics_history(self, period='1h'):
+        """Get historical metrics for sparkline charts"""
+        now = datetime.now()
+        cutoff_map = {
+            '1h': timedelta(hours=1),
+            '6h': timedelta(hours=6),
+            '1d': timedelta(days=1),
+            '1w': timedelta(weeks=1)
+        }
+        cutoff = now - cutoff_map.get(period, timedelta(hours=1))
+        
+        history = [m for m in self.metrics_history 
+                   if datetime.fromisoformat(m['timestamp']) > cutoff]
+        
+        # Sample to ~60 data points
+        step = max(1, len(history) // 60)
+        sampled = history[::step]
+        
+        return {
+            'period': period,
+            'labels': [datetime.fromisoformat(m['timestamp']).strftime('%H:%M') for m in sampled],
+            'cpu': [m['cpu'] for m in sampled],
+            'ram': [m['ram'] for m in sampled],
+            'disk': [m['disk'] for m in sampled],
+            'network_mbps': [round((m.get('network_rx_bytes', 0) + m.get('network_tx_bytes', 0)) / 131072, 1) for m in sampled]
+        }
+    
+    def get_host_info(self):
+        """Get detailed host machine information"""
+        return {
+            'name': socket.gethostname(),
+            'cpu_percent': psutil.cpu_percent(),
+            'cpu_count': psutil.cpu_count(),
+            'ram_percent': psutil.virtual_memory().percent,
+            'ram_total_gb': round(psutil.virtual_memory().total / (1024**3), 1),
+            'disk_percent': psutil.disk_usage('/').percent,
+            'disk_total_gb': round(psutil.disk_usage('/').total / (1024**3), 1),
+            'network_speed_mbps': self._calculate_network_speed(),
+            'status': 'online',
+            'uptime': self._get_uptime(),
+            'os': os.uname().sysname if hasattr(os, 'uname') else 'Linux'
+        }
+    
+    def _calculate_network_speed(self):
+        """Calculate current network speed in Mbps"""
+        net1 = psutil.net_io_counters()
+        time.sleep(0.5)
+        net2 = psutil.net_io_counters()
+        bytes_total = (net2.bytes_recv + net2.bytes_sent) - (net1.bytes_recv + net1.bytes_sent)
+        return round(bytes_total * 8 / 500_000, 1)  # Mbps over 0.5s
+    
+    def _get_uptime(self):
+        """Get system uptime in human readable format"""
+        boot_time = psutil.boot_time()
+        uptime_seconds = time.time() - boot_time
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+        return f"{days}d {hours}h {minutes}m"
+    
+    # ---- VM Management (UPGRADED) ----
+    
+    def get_vms_list(self):
+        """Universal VM detection - works with any hypervisor, cloud, or environment"""
+        vms = []
+        detected_methods = []
+        seen_names = set()  # Prevent duplicates
+        
+        # ------------------------------------------------------------------
+        # METHOD 1: libvirt / KVM / QEMU (virsh)
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(['virsh', 'list', '--all'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')[2:]
+                for line in lines:
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            vm_name = parts[1]
+                            vm_state = parts[2]
+                            if vm_name not in seen_names:
+                                seen_names.add(vm_name)
+                                vms.append({
+                                    'name': vm_name,
+                                    'state': vm_state,
+                                    'ip': self._get_vm_ip(vm_name),
+                                    'hypervisor': 'libvirt',
+                                    'id': parts[0] if parts[0] != '-' else None,
+                                    'cpu': self._get_vm_cpu(vm_name),
+                                    'ram': self._get_vm_ram(vm_name),
+                                    'disk': self._get_vm_disk(vm_name)
+                                })
+                if vms:
+                    detected_methods.append('libvirt')
+        except Exception as e:
+            print(f"libvirt detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 2: QEMU Processes (direct) - finds VMs started directly
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(
+                "ps aux | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for name in result.stdout.strip().split('\n'):
+                    name = name.strip().rstrip(',')
+                    if name and name not in seen_names:
+                        seen_names.add(name)
+                        vms.append({
+                            'name': name,
+                            'state': 'running',
+                            'ip': self._get_vm_ip(name),
+                            'hypervisor': 'qemu',
+                            'id': None,
+                            'cpu': '0%',
+                            'ram': '0%',
+                            'disk': '0%'
+                        })
+                detected_methods.append('qemu')
+        except Exception as e:
+            print(f"QEMU detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 3: Docker Containers (node-like)
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(
+                "docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().split('\n'):
+                    if '|' in line:
+                        name, status, image = line.split('|', 2)
+                        if any(keyword in name.lower() for keyword in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master', 'control']):
+                            if name not in seen_names:
+                                seen_names.add(name)
+                                vms.append({
+                                    'name': name,
+                                    'state': 'running' if 'Up' in status else 'exited',
+                                    'ip': 'container',
+                                    'hypervisor': 'docker',
+                                    'id': None,
+                                    'cpu': '0%',
+                                    'ram': '0%',
+                                    'disk': '0%'
+                                })
+                detected_methods.append('docker')
+        except Exception as e:
+            print(f"Docker detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 4: LXC / LXD Containers
+        # ------------------------------------------------------------------
+        try:
+            result = subprocess.run(
+                "lxc list --format csv -c n,s 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().split('\n'):
+                    if ',' in line:
+                        name, status = line.split(',', 1)
+                        name = name.strip()
+                        if name and name not in seen_names:
+                            seen_names.add(name)
+                            vms.append({
+                                'name': name,
+                                'state': status.strip(),
+                                'ip': 'lxc',
+                                'hypervisor': 'lxc',
+                                'id': None,
+                                'cpu': '0%',
+                                'ram': '0%',
+                                'disk': '0%'
+                            })
+                detected_methods.append('lxc')
+        except Exception as e:
+            print(f"LXC detection: {e}")
+        
+        # ------------------------------------------------------------------
+        # METHOD 5: Known VMs from config (ALWAYS included as fallback)
+        # ------------------------------------------------------------------
+        known_vms = {
+            '10.0.0.21': 'k8s-node-01',
+            '10.0.0.22': 'k8s-node-02', 
+            '10.0.0.23': 'k8s-node-03'
+        }
+        
+        for ip, name in known_vms.items():
+            if name not in seen_names:
+                seen_names.add(name)
+                # Check if reachable via ping
+                reachable = False
+                try:
+                    result = subprocess.run(
+                        f"ping -c 1 -W 1 {ip} 2>/dev/null",
+                        shell=True, capture_output=True, text=True, timeout=2
+                    )
+                    reachable = result.returncode == 0
+                except:
+                    pass
+                
+                vms.append({
+                    'name': name,
+                    'state': 'running' if reachable else 'offline',
+                    'ip': ip,
+                    'hypervisor': 'known',
+                    'id': None,
+                    'cpu': '0%',
+                    'ram': '0%',
+                    'disk': '0%'
+                })
+        
+        detected_methods.append('known_vms')
+        
+        # ------------------------------------------------------------------
+        # Log detection summary
+        # ------------------------------------------------------------------
+        print(f"VM detection methods: {', '.join(set(detected_methods))} | Total VMs: {len(vms)}")
+        
+        return vms
+    
+    def _get_vm_ip(self, vm_name):
+        """Get IP address of a VM - multiple methods"""
+        # Method 1: virsh domifaddr (agent)
+        try:
+            result = subprocess.run(['virsh', 'domifaddr', vm_name, '--source', 'agent'], 
+                                  capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split('\n'):
+                if 'ipv4' in line.lower():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        ip = parts[-1].split('/')[0]
+                        if ip and ip != '0.0.0.0':
+                            return ip
+        except:
+            pass
+        
+        # Method 2: virsh domifaddr without agent
+        try:
+            result = subprocess.run(['virsh', 'domifaddr', vm_name], 
+                                  capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split('\n'):
+                if 'ipv4' in line.lower():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        ip = parts[-1].split('/')[0]
+                        if ip and ip != '0.0.0.0':
+                            return ip
+        except:
+            pass
+        
+        # Method 3: Known IPs lookup
+        known_ips = {
+            'k8s-node-01': '10.0.0.21',
+            'k8s-node-02': '10.0.0.22',
+            'k8s-node-03': '10.0.0.23',
+        }
+        if vm_name in known_ips:
+            ip = known_ips[vm_name]
+            # Verify reachability
+            try:
+                result = subprocess.run(
+                    f"ping -c 1 -W 1 {ip} 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0:
+                    return ip
+            except:
+                pass
+        
+        return 'unknown'
+    
+    def _get_vm_cpu(self, vm_name):
+        """Get VM CPU usage via virsh"""
+        try:
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --cpu-total 2>/dev/null | grep 'cpu.time' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                cpu_ns = int(result.stdout.strip())
+                return f"{min(cpu_ns / 1000000000, 100):.0f}%"
+        except:
+            pass
+        return '0%'
+    
+    def _get_vm_ram(self, vm_name):
+        """Get VM RAM usage via virsh"""
+        try:
+            # Try balloon stats first
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --balloon 2>/dev/null | grep 'balloon.current' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                mem_kb = int(result.stdout.strip())
+                mem_gb = mem_kb / (1024 * 1024)
+                return f"{mem_gb:.1f}Gi" if mem_gb >= 1 else f"{mem_kb/1024:.0f}Mi"
+            
+            # Fallback: dominfo
+            result = subprocess.run(
+                f"virsh dominfo {vm_name} 2>/dev/null | grep 'Used memory' | awk '{{print $3, $4}}'",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except:
+            pass
+        return '0Mi'
+    
+    def _get_vm_disk(self, vm_name):
+        """Get VM disk info via virsh"""
+        try:
+            result = subprocess.run(
+                f"virsh domblklist {vm_name} --details 2>/dev/null | grep -E 'vda|sda|hda' | awk '{{print $4}}' | head -1",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                disk_path = result.stdout.strip()
+                # Try to get disk size
+                result2 = subprocess.run(
+                    f"qemu-img info '{disk_path}' 2>/dev/null | grep 'virtual size' | awk '{{print $3, $4}}'",
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+                if result2.returncode == 0 and result2.stdout.strip():
+                    return result2.stdout.strip()
+                return disk_path
+        except:
+            pass
+        return '0GiB'
+    
+    def get_vm_details(self, vm_name):
+        """Get comprehensive VM details"""
+        details = {
+            'name': vm_name,
+            'state': 'unknown',
+            'vcpus': 0,
+            'memory': {},
+            'disks': [],
+            'interfaces': [],
+            'snapshots': [],
+            'cpu_stats': {},
+            'error': None
+        }
+        
+        try:
+            # Domain info
+            result = subprocess.run(
+                f'virsh dominfo {vm_name}',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'State:' in line:
+                        details['state'] = line.split(':')[1].strip()
+                    elif 'CPU(s):' in line:
+                        details['vcpus'] = line.split(':')[1].strip()
+                    elif 'Used memory:' in line:
+                        details['memory']['used'] = line.split(':')[1].strip()
+                    elif 'Max memory:' in line:
+                        details['memory']['max'] = line.split(':')[1].strip()
+            
+            # CPU stats
+            result = subprocess.run(
+                f'virsh domstats {vm_name} --cpu-total',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        details['cpu_stats'][key.strip()] = value.strip()
+            
+            # Snapshots
+            result = subprocess.run(
+                f'virsh snapshot-list {vm_name} --name',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                details['snapshots'] = [s.strip() for s in result.stdout.split('\n') if s.strip()]
+            
+            # Disk info
+            result = subprocess.run(
+                f'virsh domblklist {vm_name} --details',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n')[2:]:
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            details['disks'].append({
+                                'type': parts[0],
+                                'device': parts[1],
+                                'target': parts[2],
+                                'source': parts[3] if len(parts) > 3 else ''
+                            })
+            
+            # Network interfaces
+            result = subprocess.run(
+                f'virsh domiflist {vm_name}',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n')[2:]:
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            details['interfaces'].append({
+                                'type': parts[1],
+                                'source': parts[2],
+                                'model': parts[3],
+                                'mac': parts[4]
+                            })
+        
+        except Exception as e:
+            details['error'] = str(e)
+        
+        return details
+    
+    # ---- Kubernetes Management ----
+    
+    def get_kubernetes_resources(self):
+        """Get comprehensive Kubernetes resources"""
+        resources = {
+            'available': False,
+            'nodes': [],
+            'pods': [],
+            'deployments': [],
+            'services': [],
+            'namespaces': [],
+            'jobs': [],
+            'cronjobs': [],
+            'pvcs': [],
+            'ingresses': []
+        }
+        
+        try:
+            # Check if kubectl is available
+            which_result = subprocess.run(['which', 'kubectl'], capture_output=True, text=True)
+            if which_result.returncode != 0:
+                return resources
+            
+            resources['available'] = True
+            
+            # Nodes
+            result = subprocess.run(
+                'kubectl get nodes -o json 2>/dev/null',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                for item in data.get('items', []):
+                    resources['nodes'].append({
+                        'name': item['metadata']['name'],
+                        'status': self._get_node_status(item),
+                        'version': item['status']['nodeInfo']['kubeletVersion'],
+                        'cpu': item['status']['capacity']['cpu'],
+                        'memory': item['status']['capacity']['memory'],
+                        'age': self._calculate_age(item['metadata']['creationTimestamp'])
+                    })
+            
+            # Pods
+            result = subprocess.run(
+                'kubectl get pods --all-namespaces -o json 2>/dev/null',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                for item in data.get('items', []):
+                    resources['pods'].append({
+                        'name': item['metadata']['name'],
+                        'namespace': item['metadata']['namespace'],
+                        'status': item['status']['phase'],
+                        'node': item['spec'].get('nodeName', ''),
+                        'restarts': sum(c.get('restartCount', 0) for c in item['status'].get('containerStatuses', [])),
+                        'age': self._calculate_age(item['metadata']['creationTimestamp']),
+                        'labels': item['metadata'].get('labels', {})
+                    })
+            
+            # Other resources
+            for resource_type in ['deployments', 'services', 'jobs', 'cronjobs', 'pvcs', 'ingresses']:
+                result = subprocess.run(
+                    f'kubectl get {resource_type} --all-namespaces -o json 2>/dev/null',
+                    shell=True, capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    data = json.loads(result.stdout)
+                    for item in data.get('items', []):
+                        resources[resource_type].append({
+                            'name': item['metadata']['name'],
+                            'namespace': item['metadata']['namespace'],
+                            'age': self._calculate_age(item['metadata']['creationTimestamp'])
+                        })
+        
+        except Exception as e:
+            print(f"Kubernetes error: {e}")
+        
+        return resources
+    
+    def _get_node_status(self, node):
+        """Determine node readiness status"""
+        for condition in node['status'].get('conditions', []):
+            if condition['type'] == 'Ready':
+                return 'Ready' if condition['status'] == 'True' else 'NotReady'
+        return 'Unknown'
+    
+    def _calculate_age(self, timestamp):
+        """Calculate human-readable age from timestamp"""
+        try:
+            created = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            delta = datetime.now(created.tzinfo) - created
+            if delta.days > 0:
+                return f"{delta.days}d"
+            hours = delta.seconds // 3600
+            if hours > 0:
+                return f"{hours}h"
+            minutes = delta.seconds // 60
+            return f"{minutes}m"
+        except:
+            return 'unknown'
+    
+    # ---- Event Management ----
+    
+    def add_event(self, event_type, message, severity='info'):
+        """Add an event to the stream and timeline"""
+        event = {
+            'timestamp': datetime.now().isoformat(),
+            'type': event_type,
+            'message': message,
+            'severity': severity,
+            'id': hashlib.md5(f"{time.time()}{message}".encode()).hexdigest()[:8]
+        }
+        self.events.appendleft(event)
+        self.timeline.append(event)
+        
+        # Auto-create alerts for critical events
+        if severity in ('critical', 'error'):
+            self.alerts.append({
+                **event,
+                'acknowledged': False,
+                'resolved': False
+            })
+        
+        return event
+    
+    def add_audit(self, user, action, resource):
+        """Add an audit log entry"""
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'user': user,
+            'action': action,
+            'resource': resource
+        }
+        self.audit_log.appendleft(entry)
+        return entry
+    
+    def get_timeline(self, hours=1):
+        """Get event timeline for correlation view"""
+        cutoff = datetime.now() - timedelta(hours=hours)
+        return [e for e in self.timeline if datetime.fromisoformat(e['timestamp']) > cutoff]
+    
+    # ---- Actions ----
+    
+    def execute_action(self, resource_type, resource_name, action):
+        """Execute an action on a resource with job tracking"""
+        job_id = hashlib.md5(f"{time.time()}{resource_name}{action}".encode()).hexdigest()[:12]
+        
+        # Define action workflows
+        action_map = {
+            'vm_restart': [
+                {'name': 'Shutdown VM', 'type': 'command', 'command': f'virsh shutdown {resource_name}'},
+                {'name': 'Wait for shutdown', 'type': 'sleep', 'duration': 30},
+                {'name': 'Start VM', 'type': 'command', 'command': f'virsh start {resource_name}'},
+                {'name': 'Wait for boot', 'type': 'sleep', 'duration': 30},
+                {'name': 'Verify running', 'type': 'verify', 'command': f'virsh domstate {resource_name} | grep running'}
+            ],
+            'vm_shutdown': [
+                {'name': 'Shutdown VM', 'type': 'command', 'command': f'virsh shutdown {resource_name}'},
+                {'name': 'Wait', 'type': 'sleep', 'duration': 30},
+                {'name': 'Verify', 'type': 'verify', 'command': f'virsh domstate {resource_name} | grep "shut off"'}
+            ],
+            'vm_snapshot': [
+                {'name': 'Create snapshot', 'type': 'command', 'command': f'virsh snapshot-create-as {resource_name} auto-{datetime.now().strftime("%Y%m%d-%H%M%S")}'}
+            ],
+            'pod_restart': [
+                {'name': 'Delete pod', 'type': 'command', 'command': f'kubectl delete pod {resource_name}'},
+                {'name': 'Wait for restart', 'type': 'sleep', 'duration': 10},
+                {'name': 'Verify running', 'type': 'verify', 'command': f'kubectl get pod {resource_name} -o jsonpath="{{.status.phase}}" | grep Running'}
+            ],
+            'node_drain': [
+                {'name': 'Cordon node', 'type': 'command', 'command': f'kubectl cordon {resource_name}'},
+                {'name': 'Drain node', 'type': 'command', 'command': f'kubectl drain {resource_name} --ignore-daemonsets --delete-emptydir-data --force'},
+                {'name': 'Verify', 'type': 'verify', 'command': f'kubectl get node {resource_name} -o jsonpath="{{.spec.unschedulable}}" | grep true'}
+            ],
+            'node_uncordon': [
+                {'name': 'Uncordon node', 'type': 'command', 'command': f'kubectl uncordon {resource_name}'}
+            ]
+        }
+        
+        action_key = f"{resource_type}_{action}"
+        if action_key in action_map:
+            job = self.automation.run_job(job_id, action, resource_name, action_map[action_key])
+            self.add_event('action', f'{action} initiated on {resource_type} {resource_name}', 'info')
+            self.add_audit('system', action, f'{resource_type}/{resource_name}')
+            return job
+        
+        return None
+    
+    # ---- Diagnostics & Repair ----
+    
+    def run_diagnostics(self):
+        """Run full network diagnostics using existing tool"""
+        try:
+            result = subprocess.run(
+                ['sudo', 'network-recover', 'diagnose'],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            issues = []
+            for line in result.stdout.split('\n'):
+                if 'FAIL' in line:
+                    issues.append({
+                        'severity': 'critical',
+                        'message': line.strip(),
+                        'suggested_action': 'Review and repair'
+                    })
+                elif 'WARN' in line:
+                    issues.append({
+                        'severity': 'warning',
+                        'message': line.strip(),
+                        'suggested_action': 'Monitor and investigate'
+                    })
+            
+            return {
+                'success': result.returncode == 0,
+                'output': result.stdout[-2000:],
+                'issues': issues
+            }
+        except Exception as e:
+            return {'success': False, 'output': str(e), 'issues': []}
+    
+    def run_repair(self, target=None):
+        """Run network repair using existing tool"""
+        try:
+            cmd = ['sudo', 'network-recover', 'repair']
+            if target:
+                cmd.extend(['--target', target])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            self.add_event('recovery', f'Network repair {"succeeded" if result.returncode == 0 else "failed"}', 
+                          'success' if result.returncode == 0 else 'error')
+            
+            return {
+                'success': result.returncode == 0,
+                'output': result.stdout[-2000:]
+            }
+        except Exception as e:
+            return {'success': False, 'output': str(e)}
+    
+    def get_detected_problems(self):
+        """Run diagnostics and return structured problems"""
+        diag = self.run_diagnostics()
+        problems = []
+        
+        for issue in diag.get('issues', []):
+            problems.append({
+                'type': 'network',
+                'severity': issue['severity'],
+                'message': issue['message'],
+                'suggested_action': issue.get('suggested_action', ''),
+                'auto_fix': True if 'FAIL' in issue['message'] else False
+            })
+        
+        return problems
+    
+    # ---- Search ----
+    
+    def search_resources(self, query):
+        """Search across all infrastructure resources"""
+        results = []
+        q = query.lower().strip()
+        
+        if not q:
+            return results
+        
+        # Search VMs
+        vms = self.get_vms_list()
+        for vm in vms:
+            if q in vm.get('name', '').lower() or q in vm.get('ip', '').lower():
+                results.append({
+                    'type': 'VM',
+                    'name': vm['name'],
+                    'state': vm['state'],
+                    'path': f'vm/{vm["name"]}'
+                })
+        
+        # Search Kubernetes
+        k8s = self.get_kubernetes_resources()
+        for resource_type, items in k8s.items():
+            if isinstance(items, list):
+                for item in items:
+                    if q in item.get('name', '').lower() or q in item.get('namespace', '').lower():
+                        results.append({
+                            'type': resource_type.capitalize(),
+                            'name': item['name'],
+                            'namespace': item.get('namespace', ''),
+                            'path': f'kubernetes/{resource_type}/{item["name"]}'
+                        })
+        
+        # Search host
+        host = self.get_host_info()
+        if q in host.get('name', '').lower():
+            results.append({
+                'type': 'Host',
+                'name': host['name'],
+                'path': 'host'
+            })
+        
+        return results[:20]  # Limit to 20 results
 
-    logger.info("ðŸŒ Network Recovery Web UI: http://%s:%s", args.host, args.port)
-    logger.info("âš™ï¸  Workers: %d | Cmd timeout: %ds | Dashboard timeout: %ds",
-                MAX_WORKERS, CMD_TIMEOUT, DASHBOARD_TIMEOUT)
-    logger.info("ðŸ“‹ Press Ctrl+C to stop")
 
+# ============================================================
+# WEBSOCKET SERVER
+# ============================================================
+
+class WebSocketServer:
+    """WebSocket server for real-time bidirectional communication"""
+    
+    def __init__(self, monitor):
+        self.monitor = monitor
+        self.clients = set()
+        self.subscriptions = {}  # client_id -> [topics]
+    
+    async def handler(self, websocket, path):
+        """Handle individual WebSocket connections"""
+        self.clients.add(websocket)
+        client_id = id(websocket)
+        self.subscriptions[client_id] = ['metrics', 'events']
+        
+        try:
+            # Send welcome message
+            await websocket.send(json.dumps({
+                'type': 'connected',
+                'data': {
+                    'client_id': client_id,
+                    'timestamp': datetime.now().isoformat()
+                }
+            }))
+            
+            # Handle incoming messages
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    response = await self.handle_command(data, client_id)
+                    await websocket.send(json.dumps(response))
+                except json.JSONDecodeError:
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': 'Invalid JSON'
+                    }))
+                except Exception as e:
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': str(e)
+                    }))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            self.clients.discard(websocket)
+            if client_id in self.subscriptions:
+                del self.subscriptions[client_id]
+    
+    async def handle_command(self, data, client_id):
+        """Route commands to appropriate handlers"""
+        command = data.get('command', '')
+        params = data.get('params', {})
+        request_id = data.get('request_id', '')
+        
+        handlers = {
+            'get_metrics': lambda: self.monitor.get_system_metrics(),
+            'get_metrics_history': lambda: self.monitor.get_metrics_history(params.get('period', '1h')),
+            'get_host_info': lambda: self.monitor.get_host_info(),
+            'get_vms': lambda: self.monitor.get_vms_list(),
+            'get_vm_details': lambda: self.monitor.get_vm_details(params.get('name', '')),
+            'get_kubernetes': lambda: self.monitor.get_kubernetes_resources(),
+            'get_events': lambda: list(self.monitor.events)[:50],
+            'get_timeline': lambda: self.monitor.get_timeline(params.get('hours', 1)),
+            'get_alerts': lambda: self.monitor.alerts,
+            'get_audit_log': lambda: list(self.monitor.audit_log)[:100],
+            'run_diagnostics': lambda: self.monitor.run_diagnostics(),
+            'run_repair': lambda: self.monitor.run_repair(params.get('target')),
+            'get_problems': lambda: self.monitor.get_detected_problems(),
+            'search': lambda: self.monitor.search_resources(params.get('query', '')),
+            'execute_action': lambda: self.monitor.execute_action(
+                params.get('resource_type', ''),
+                params.get('resource_name', ''),
+                params.get('action', '')
+            ),
+            'get_job_status': lambda: self.monitor.automation.get_job_status(params.get('job_id', '')),
+            'subscribe': lambda: self._handle_subscribe(client_id, params.get('topics', [])),
+            'unsubscribe': lambda: self._handle_unsubscribe(client_id, params.get('topics', [])),
+            'acknowledge_alert': lambda: self._acknowledge_alert(params.get('alert_id', '')),
+        }
+        
+        if command in handlers:
+            try:
+                result = handlers[command]()
+                return {
+                    'type': f'{command}_response',
+                    'data': result,
+                    'request_id': request_id
+                }
+            except Exception as e:
+                return {
+                    'type': 'error',
+                    'message': str(e),
+                    'request_id': request_id
+                }
+        
+        return {
+            'type': 'error',
+            'message': f'Unknown command: {command}',
+            'request_id': request_id
+        }
+    
+    def _handle_subscribe(self, client_id, topics):
+        """Subscribe client to specific topics"""
+        if client_id in self.subscriptions:
+            self.subscriptions[client_id].extend(topics)
+            self.subscriptions[client_id] = list(set(self.subscriptions[client_id]))
+        return {'subscribed': topics}
+    
+    def _handle_unsubscribe(self, client_id, topics):
+        """Unsubscribe client from specific topics"""
+        if client_id in self.subscriptions:
+            self.subscriptions[client_id] = [
+                t for t in self.subscriptions[client_id] if t not in topics
+            ]
+        return {'unsubscribed': topics}
+    
+    def _acknowledge_alert(self, alert_id):
+        """Mark an alert as acknowledged"""
+        for alert in self.monitor.alerts:
+            if alert.get('id') == alert_id:
+                alert['acknowledged'] = True
+                return {'acknowledged': True}
+        return {'acknowledged': False, 'error': 'Alert not found'}
+    
+    async def broadcast(self, message, topic=None):
+        """Broadcast message to subscribed clients"""
+        if self.clients:
+            tasks = []
+            for client in self.clients:
+                client_id = id(client)
+                if topic is None or topic in self.subscriptions.get(client_id, []):
+                    tasks.append(asyncio.create_task(client.send(json.dumps(message))))
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def start_broadcasting(self):
+        """Periodically broadcast updates to all connected clients"""
+        while True:
+            try:
+                # Broadcast metrics every second
+                metrics = self.monitor.get_system_metrics()
+                await self.broadcast({
+                    'type': 'metrics_update',
+                    'data': metrics
+                }, topic='metrics')
+                
+                # Broadcast recent events
+                recent_events = list(self.monitor.events)[:20]
+                if recent_events:
+                    await self.broadcast({
+                        'type': 'events_update',
+                        'data': recent_events
+                    }, topic='events')
+                
+                # Broadcast alerts
+                active_alerts = [a for a in self.monitor.alerts if not a.get('resolved')]
+                if active_alerts:
+                    await self.broadcast({
+                        'type': 'alerts_update',
+                        'data': active_alerts
+                    }, topic='alerts')
+                
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"Broadcast error: {e}")
+                await asyncio.sleep(5)
+
+
+# ============================================================
+# HTTP API SERVER
+# ============================================================
+
+class APIHandler(SimpleHTTPRequestHandler):
+    """HTTP request handler with REST API endpoints"""
+    
+    # Use class variable for monitor (set before starting server)
+    monitor = None
+    
+    def __init__(self, *args, **kwargs):
+        # Serve from static directory
+        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+    
+    def do_GET(self):
+        """Handle GET requests"""
+        if self.path.startswith('/api/'):
+            self.handle_api_get()
+        else:
+            # Serve static files
+            if self.path == '/' or self.path == '':
+                self.path = '/index.html'
+            super().do_GET()
+    
+    def do_POST(self):
+        """Handle POST requests"""
+        if self.path.startswith('/api/'):
+            self.handle_api_post()
+        else:
+            self.send_error(404)
+    
+    def handle_api_get(self):
+        """Route GET API requests"""
+        path = self.path.split('?')[0]
+        
+        routes = {
+            '/api/status': self.api_get_status,
+            '/api/metrics': self.api_get_metrics,
+            '/api/metrics/history': self.api_get_metrics_history,
+            '/api/host': self.api_get_host,
+            '/api/vms': self.api_get_vms,
+            '/api/vms/details': self.api_get_vm_details,
+            '/api/kubernetes': self.api_get_kubernetes,
+            '/api/events': self.api_get_events,
+            '/api/timeline': self.api_get_timeline,
+            '/api/alerts': self.api_get_alerts,
+            '/api/audit': self.api_get_audit_log,
+            '/api/problems': self.api_get_problems,
+            '/api/jobs': self.api_get_jobs,
+            '/api/search': self.api_search,
+        }
+        
+        handler = routes.get(path)
+        if handler:
+            try:
+                data = handler()
+                self._send_json(200, data)
+            except Exception as e:
+                self._send_json(500, {'error': str(e)})
+        else:
+            self._send_json(404, {'error': 'Not found'})
+    
+    def handle_api_post(self):
+        """Route POST API requests"""
+        path = self.path.split('?')[0]
+        
+        # Read request body
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b'{}'
+        try:
+            params = json.loads(body)
+        except:
+            params = {}
+        
+        # Parse query parameters
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        
+        routes = {
+            '/api/diagnostics': lambda: self.api_run_diagnostics(),
+            '/api/repair': lambda: self.api_run_repair(params.get('target')),
+            '/api/execute': lambda: self.api_execute_action(params),
+            '/api/alerts/acknowledge': lambda: self.api_acknowledge_alert(params),
+        }
+        
+        handler = routes.get(path)
+        if handler:
+            try:
+                data = handler()
+                self._send_json(200, data)
+            except Exception as e:
+                self._send_json(500, {'error': str(e)})
+        else:
+            self._send_json(404, {'error': 'Not found'})
+    
+    def _send_json(self, status, data):
+        """Send JSON response"""
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+    
+    def do_OPTIONS(self):
+        """Handle CORS preflight"""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+    
+    # ---- API Handlers ----
+    
+    def api_get_status(self):
+        return {
+            'status': 'connected',
+            'hosts_online': 1,
+            'vms_running': len([v for v in self.monitor.get_vms_list() if v['state'] == 'running']),
+            'k8s_available': self.monitor.get_kubernetes_resources()['available'],
+            'timestamp': datetime.now().isoformat(),
+            'uptime': self.monitor._get_uptime()
+        }
+    
+    def api_get_metrics(self):
+        return self.monitor.get_system_metrics()
+    
+    def api_get_metrics_history(self):
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        period = query.get('period', ['1h'])[0]
+        return self.monitor.get_metrics_history(period)
+    
+    def api_get_host(self):
+        return self.monitor.get_host_info()
+    
+    def api_get_vms(self):
+        return self.monitor.get_vms_list()
+    
+    def api_get_vm_details(self):
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        name = query.get('name', [''])[0]
+        return self.monitor.get_vm_details(name) if name else {'error': 'Missing name parameter'}
+    
+    def api_get_kubernetes(self):
+        return self.monitor.get_kubernetes_resources()
+    
+    def api_get_events(self):
+        return list(self.monitor.events)[:100]
+    
+    def api_get_timeline(self):
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        hours = int(query.get('hours', ['1'])[0])
+        return self.monitor.get_timeline(hours)
+    
+    def api_get_alerts(self):
+        return self.monitor.alerts
+    
+    def api_get_audit_log(self):
+        return list(self.monitor.audit_log)[:100]
+    
+    def api_get_problems(self):
+        return self.monitor.get_detected_problems()
+    
+    def api_get_jobs(self):
+        return {
+            'running': list(self.monitor.automation.running_jobs.values()),
+            'completed': list(self.monitor.automation.completed_jobs)[:20]
+        }
+    
+    def api_search(self):
+        from urllib.parse import urlparse, parse_qs
+        query = parse_qs(urlparse(self.path).query)
+        q = query.get('q', [''])[0]
+        return self.monitor.search_resources(q)
+    
+    def api_run_diagnostics(self):
+        return self.monitor.run_diagnostics()
+    
+    def api_run_repair(self, target=None):
+        return self.monitor.run_repair(target)
+    
+    def api_execute_action(self, params):
+        return self.monitor.execute_action(
+            params.get('resource_type', ''),
+            params.get('resource_name', ''),
+            params.get('action', '')
+        )
+    
+    def api_acknowledge_alert(self, params):
+        alert_id = params.get('alert_id', '')
+        for alert in self.monitor.alerts:
+            if alert.get('id') == alert_id:
+                alert['acknowledged'] = True
+                return {'acknowledged': True}
+        return {'acknowledged': False, 'error': 'Alert not found'}
+
+
+# ============================================================
+# SERVER STARTUP
+# ============================================================
+
+def start_http_server(monitor):
+    """Start the HTTP server"""
+    # Set monitor on the handler class
+    APIHandler.monitor = monitor
+    
+    # Create static directory if it doesn't exist
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    
+    server = HTTPServer((HOST, HTTP_PORT), APIHandler)
+    print(f"ðŸŒ HTTP Server running on http://localhost:{HTTP_PORT}")
+    print(f"   API available at http://localhost:{HTTP_PORT}/api/")
+    
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("ðŸ‘‹ Shutting down...")
-        executor.shutdown(wait=True, timeout=5)
-        server.shutdown()
+        pass
+    finally:
+        server.server_close()
+        print("HTTP Server stopped")
 
 
-if __name__ == "__main__":
+async def start_ws_server(monitor):
+    """Start the WebSocket server"""
+    ws_server = WebSocketServer(monitor)
+    
+    print(f"ðŸ”Œ WebSocket Server running on ws://localhost:{WS_PORT}")
+    
+    async with websockets.serve(ws_server.handler, HOST, WS_PORT):
+        # Start broadcasting task
+        broadcast_task = asyncio.create_task(ws_server.start_broadcasting())
+        
+        try:
+            await asyncio.Future()  # Run forever
+        except KeyboardInterrupt:
+            pass
+        finally:
+            broadcast_task.cancel()
+            print("WebSocket Server stopped")
+
+
+def main():
+    """Main entry point"""
+    print("=" * 60)
+    print("  Infrastructure Operations Center v3.0.0")
+    print("  Three-Pane Operations Console")
+    print("=" * 60)
+    print()
+    
+    # Create monitor instance
+    monitor = InfrastructureMonitor()
+    monitor.add_event('system', 'Infrastructure Operations Center started', 'info')
+    
+    print(f"  ðŸ“Š Metrics collection: Active (1s interval)")
+    print(f"  ðŸ¤– Automation engine: Ready")
+    print(f"  ðŸ“ Event stream: Active")
+    print(f"  ðŸ“‹ Job queue: Ready")
+    print()
+    
+    # Start HTTP server in a daemon thread
+    http_thread = threading.Thread(
+        target=start_http_server, 
+        args=(monitor,), 
+        daemon=True,
+        name="HTTP-Server"
+    )
+    http_thread.start()
+    
+    # Run WebSocket server in main thread (asyncio)
+    try:
+        asyncio.run(start_ws_server(monitor))
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        raise
+
+
+if __name__ == '__main__':
     main()
 
 ----------------------------------------
@@ -5611,8 +6985,8 @@ window.addEventListener('beforeunload', function() {
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\web\static\index.html
 FULL PATH: F:\Linux_Network_Manager\network-recover\web\static\index.html
-SIZE: 9.96 KB
-LAST MODIFIED: 07/24/2026 09:14:25
+SIZE: 80.59 KB
+LAST MODIFIED: 07/24/2026 12:14:28
 ----------------------------------------
 
 <!DOCTYPE html>
@@ -5620,247 +6994,1786 @@ LAST MODIFIED: 07/24/2026 09:14:25
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Network Recovery Tool</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Infrastructure Operations Center</title>
+    <style>
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #0d1130;
+            --bg-tertiary: #151a3a;
+            --bg-hover: #1a1f3a;
+            --border: #2a2f4a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #8890b0;
+            --text-muted: #6a7090;
+            --accent: #64b5f6;
+            --accent-hover: #90caf9;
+            --success: #4caf50;
+            --warning: #ff9800;
+            --error: #f44336;
+            --info: #2196f3;
+            --sidebar-width: 280px;
+            --drawer-width: 480px;
+            --header-height: 48px;
+            --statusbar-height: 28px;
+            --actionbar-height: 44px;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'SF Mono', Consolas, monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* ============ HEADER ============ */
+        .header {
+            background: var(--bg-tertiary);
+            height: var(--header-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header-left h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--accent);
+            letter-spacing: 0.5px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .status-dot.warning { background: var(--warning); }
+        .status-dot.error { background: var(--error); }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        /* Search */
+        .search-container {
+            position: relative;
+        }
+        .search-input {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px 6px 32px;
+            border-radius: 4px;
+            font-size: 13px;
+            width: 240px;
+            transition: all 0.2s;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            width: 320px;
+            background: var(--bg-primary);
+        }
+        .search-input::placeholder { color: var(--text-muted); }
+        .search-icon {
+            position: absolute;
+            left: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-top: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+        }
+        .search-results.show { display: block; }
+        .search-result-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .search-result-item:hover { background: var(--bg-hover); }
+        .search-result-item .type-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        
+        /* Alert bell */
+        .alert-bell {
+            position: relative;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .alert-bell:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .alert-count {
+            position: absolute;
+            top: 0;
+            right: 2px;
+            background: var(--error);
+            color: white;
+            font-size: 10px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        /* ============ ACTION BAR ============ */
+        .action-bar {
+            background: var(--bg-secondary);
+            height: var(--actionbar-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+        .action-bar-btn {
+            padding: 6px 12px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .action-bar-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--border);
+        }
+        .action-bar-btn.emergency {
+            background: var(--error);
+            color: white;
+            border-color: var(--error);
+            font-weight: bold;
+        }
+        .action-bar-btn.emergency:hover {
+            background: #d32f2f;
+        }
+        .action-bar-separator {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+            margin: 0 4px;
+            flex-shrink: 0;
+        }
+        
+        /* ============ MAIN LAYOUT ============ */
+        .main-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* ============ SIDEBAR ============ */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-section {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-section-header {
+            padding: 8px 16px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 600;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+        .sidebar-section-header:hover { color: var(--text-secondary); }
+        .sidebar-tree {
+            list-style: none;
+        }
+        .tree-item {
+            padding: 4px 16px 4px 24px;
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.1s;
+        }
+        .tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .tree-item.active { background: var(--bg-hover); color: var(--accent); border-left: 2px solid var(--accent); }
+        .tree-item .tree-icon { font-size: 14px; width: 16px; text-align: center; }
+        .tree-item .tree-count { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+        .tree-item .tree-status {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-left: auto;
+        }
+        .tree-status.ok { background: var(--success); }
+        .tree-status.warn { background: var(--warning); }
+        .tree-status.err { background: var(--error); }
+        
+        .tree-children { list-style: none; }
+        .tree-children .tree-item { padding-left: 44px; font-size: 12px; }
+        
+        /* ============ CONTENT AREA ============ */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            background: var(--bg-primary);
+        }
+        
+        /* Cards */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 14px;
+        }
+        .card-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+        .card-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .card-detail {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        /* Panels */
+        .panel {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+        .panel-header {
+            padding: 10px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .panel-body {
+            padding: 12px;
+        }
+        
+        /* Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .data-table th {
+            text-align: left;
+            padding: 8px 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+        .data-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .data-table tr:hover td { background: var(--bg-hover); cursor: pointer; }
+        .data-table tr.selected td { background: rgba(100, 181, 246, 0.1); }
+        
+        /* Status badges */
+        .badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .badge-success { background: rgba(76, 175, 80, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(255, 152, 0, 0.2); color: var(--warning); }
+        .badge-error { background: rgba(244, 67, 54, 0.2); color: var(--error); }
+        .badge-info { background: rgba(33, 150, 243, 0.2); color: var(--info); }
+        
+        /* Sparklines */
+        .sparkline {
+            display: flex;
+            align-items: flex-end;
+            gap: 1px;
+            height: 30px;
+            margin-top: 4px;
+        }
+        .sparkline-bar {
+            flex: 1;
+            background: var(--accent);
+            border-radius: 1px 1px 0 0;
+            min-height: 2px;
+            opacity: 0.7;
+            transition: height 0.3s;
+        }
+        
+        /* Timeline */
+        .timeline-item {
+            display: flex;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+        .timeline-time {
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+            min-width: 40px;
+        }
+        .timeline-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+        .timeline-icon.success { background: rgba(76,175,80,0.2); color: var(--success); }
+        .timeline-icon.warning { background: rgba(255,152,0,0.2); color: var(--warning); }
+        .timeline-icon.error { background: rgba(244,67,54,0.2); color: var(--error); }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 12px;
+        }
+        .tab {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab:hover { color: var(--text-primary); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        
+        /* ============ DRAWER ============ */
+        .drawer-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .drawer-overlay.open {
+            opacity: 1;
+            pointer-events: all;
+        }
+        .drawer {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: var(--drawer-width);
+            height: 100%;
+            background: var(--bg-tertiary);
+            border-left: 1px solid var(--border);
+            z-index: 201;
+            transform: translateX(100%);
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+        }
+        .drawer.open { transform: translateX(0); }
+        .drawer-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .drawer-header h3 { font-size: 14px; color: var(--accent); }
+        .drawer-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+        }
+        .drawer-close:hover { color: var(--text-primary); }
+        .drawer-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .drawer-actions {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 6px 14px;
+            border: 1px solid var(--border);
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: var(--border); }
+        .btn-primary { background: var(--info); border-color: var(--info); color: white; }
+        .btn-primary:hover { background: #1976d2; }
+        .btn-danger { background: var(--error); border-color: var(--error); color: white; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-success { background: var(--success); border-color: var(--success); color: white; }
+        .btn-warning { background: var(--warning); border-color: var(--warning); color: white; }
+        .btn-warning:hover { background: #e68900; }
+        
+        /* ============ STATUS BAR ============ */
+        .status-bar {
+            background: var(--bg-secondary);
+            height: var(--statusbar-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+        .status-bar-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
+        
+        /* Job queue */
+        .job-item {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .job-progress {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .job-progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s;
+        }
+        
+        /* Alerts panel */
+        .alerts-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            width: 360px;
+            max-height: 400px;
+            overflow-y: auto;
+            display: none;
+            z-index: 300;
+            margin-top: 4px;
+        }
+        .alerts-dropdown.show { display: block; }
+        .alert-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .alert-item:hover { background: var(--bg-hover); }
+        
+        /* Multi-select bar */
+        .multiselect-bar {
+            background: var(--accent);
+            color: var(--bg-primary);
+            padding: 8px 16px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .multiselect-bar.show { display: flex; }
+        
+        /* Terminal */
+        .terminal {
+            background: #000;
+            color: #0f0;
+            font-family: 'SF Mono', Consolas, monospace;
+            padding: 12px;
+            border-radius: 4px;
+            height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .terminal-line { white-space: pre-wrap; }
+        .terminal-prompt { color: var(--accent); }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="logo">
-                <span class="icon">ðŸŒ</span>
-                <h1>Network Recovery Tool</h1>
-            </div>
-            <div class="status-badge" id="statusBadge">
-                <span class="dot" id="statusDot"></span>
-                <span id="statusText">Checking...</span>
-            </div>
-        </header>
-
-        <nav>
-            <button class="btn btn-primary" onclick="runAction('status')">
-                <span class="icon">ðŸ“Š</span> Status
-            </button>
-            <button class="btn btn-success" onclick="runAction('diagnose')">
-                <span class="icon">ðŸ”</span> Diagnose
-            </button>
-            <button class="btn btn-warning" onclick="runAction('repair')">
-                <span class="icon">ðŸ”§</span> Repair
-            </button>
-            <button class="btn btn-info" onclick="runAction('snapshot')">
-                <span class="icon">ðŸ’¾</span> Snapshot
-            </button>
-            <button class="btn btn-dashboard" onclick="switchTab('dashboard')">
-                <span class="icon">ðŸ“ˆ</span> Dashboard
-            </button>
-            <button class="btn btn-danger" onclick="clearOutput()">
-                <span class="icon">ðŸ—‘ï¸</span> Clear
-            </button>
-        </nav>
-
-        <div class="layers" id="layers">
-            <span class="layer" data-layer="1">Physical</span>
-            <span class="layer" data-layer="2">Link</span>
-            <span class="layer" data-layer="3">IP</span>
-            <span class="layer" data-layer="4">Routing</span>
-            <span class="layer" data-layer="5">Gateway</span>
-            <span class="layer" data-layer="6">Internet</span>
-            <span class="layer" data-layer="7">DNS</span>
-            <span class="layer" data-layer="8">HTTPS</span>
-            <span class="layer" data-layer="9">NetworkManager</span>
-            <span class="layer" data-layer="10">Virtualization</span>
-            <span class="layer" data-layer="11">Kubernetes</span>
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-left">
+            <span class="status-dot" id="status-dot"></span>
+            <h1>Infrastructure Operations Center</h1>
         </div>
-
-        <!-- Main Output Area -->
-        <div class="output" id="output">
-            <div class="placeholder">Click an action to begin</div>
+        <div class="header-right">
+            <div class="search-container">
+                <span class="search-icon">ðŸ”</span>
+                <input type="text" class="search-input" id="global-search" placeholder="Search resources... (Ctrl+K)" oninput="handleSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';handleSearch('');this.blur();}">
+                <div class="search-results" id="search-results"></div>
+            </div>
+            <button class="alert-bell" onclick="toggleAlerts()" title="Alerts">
+                ðŸ””
+                <span class="alert-count" id="alert-count" style="display:none">0</span>
+            </button>
+            <div class="alerts-dropdown" id="alerts-dropdown"></div>
         </div>
-
-        <!-- Dashboard Tab Content -->
-        <div id="dashboard">
-            <h2>ðŸ“ˆ System Dashboard</h2>
-            <div id="dashboard-content">
-                <div class="placeholder">Loading dashboard...</div>
+    </div>
+    
+    <!-- ACTION BAR -->
+    <div class="action-bar">
+        <button class="action-bar-btn" onclick="refreshAll()" title="Refresh">ðŸ”„ Refresh</button>
+        <button class="action-bar-btn" onclick="runDiagnostics()" title="Diagnose">ðŸ” Diagnose</button>
+        <button class="action-bar-btn" onclick="runRepair()" title="Repair">ðŸ”§ Repair</button>
+        <button class="action-bar-btn" onclick="createSnapshot()" title="Snapshot">ðŸ’¾ Snapshot</button>
+        <span class="action-bar-separator"></span>
+        <button class="action-bar-btn" onclick="restartSelected()" title="Restart Selected">â–¶ Restart</button>
+        <button class="action-bar-btn emergency" onclick="emergencyMode()" title="Emergency Mode">âš  Emergency</button>
+        <span class="action-bar-separator"></span>
+        <button class="action-bar-btn" onclick="toggleTerminal()" title="Terminal">>_ Terminal</button>
+        <button class="action-bar-btn" onclick="showAuditLog()" title="Audit Log">ðŸ“‹ Audit</button>
+    </div>
+    
+    <!-- MULTI-SELECT BAR -->
+    <div class="multiselect-bar" id="multiselect-bar">
+        <span id="selected-count">0 selected</span>
+        <button class="btn btn-primary" onclick="bulkRestart()">Restart All</button>
+        <button class="btn btn-danger" onclick="bulkDelete()">Delete All</button>
+        <button class="btn" onclick="clearSelection()">Clear</button>
+    </div>
+    
+    <!-- MAIN THREE-PANE LAYOUT -->
+    <div class="main-layout">
+        <!-- LEFT SIDEBAR - Resource Tree -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('infra-tree')">â–¼ Infrastructure</div>
+                <ul class="tree-children" id="infra-tree">
+                    <li class="tree-item active" onclick="selectResource('host')">
+                        <span class="tree-icon">ðŸ–¥</span> Host <span class="tree-count" id="host-name">mx</span>
+                        <span class="tree-status ok"></span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('vms')">
+                        <span class="tree-icon">ðŸ“¦</span> VMs <span class="tree-count" id="vm-count-sidebar">0</span>
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('k8s-tree')">â–¼ Kubernetes</div>
+                <ul class="tree-children" id="k8s-tree">
+                    <li class="tree-item" onclick="selectResource('k8s-nodes')">
+                        <span class="tree-icon">ðŸ”²</span> Nodes <span class="tree-count" id="node-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-pods')">
+                        <span class="tree-icon">â¬›</span> Pods <span class="tree-count" id="pod-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-deployments')">
+                        <span class="tree-icon">ðŸ“‹</span> Deployments
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-services')">
+                        <span class="tree-icon">ðŸ”—</span> Services
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-jobs')">
+                        <span class="tree-icon">â±</span> Jobs
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('recovery-tree')">â–¼ Recovery</div>
+                <ul class="tree-children" id="recovery-tree">
+                    <li class="tree-item" onclick="selectResource('problems')">
+                        <span class="tree-icon">âš </span> Problems <span class="tree-count" id="problem-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('jobs')">
+                        <span class="tree-icon">ðŸ“Š</span> Job Queue
+                    </li>
+                    <li class="tree-item" onclick="selectResource('automation')">
+                        <span class="tree-icon">ðŸ¤–</span> Automations
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('monitor-tree')">â–¼ Monitoring</div>
+                <ul class="tree-children" id="monitor-tree">
+                    <li class="tree-item" onclick="selectResource('timeline')">
+                        <span class="tree-icon">ðŸ“…</span> Timeline
+                    </li>
+                    <li class="tree-item" onclick="selectResource('events')">
+                        <span class="tree-icon">ðŸ“</span> Events
+                    </li>
+                </ul>
             </div>
         </div>
-
-        <div class="progress-container" id="progressContainer" style="display:none">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <span class="progress-text" id="progressText">0%</span>
+        
+        <!-- CENTER CONTENT -->
+        <div class="content-area" id="content-area">
+            <!-- Dynamic content loaded here -->
         </div>
-
-        <footer>
-            <span>v2.0.0</span>
-            <span id="connectionStatus">â— Connected</span>
-        </footer>
+    </div>
+    
+    <!-- ACTION DRAWER -->
+    <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+    <div class="drawer" id="drawer">
+        <div class="drawer-header">
+            <h3 id="drawer-title">Resource Details</h3>
+            <button class="drawer-close" onclick="closeDrawer()">Ã—</button>
+        </div>
+        <div class="drawer-body" id="drawer-body"></div>
+        <div class="drawer-actions" id="drawer-actions"></div>
+    </div>
+    
+    <!-- TERMINAL (hidden by default) -->
+    <div class="terminal" id="terminal" style="display:none;">
+        <div id="terminal-output">
+            <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+        </div>
+    </div>
+    
+    <!-- STATUS BAR -->
+    <div class="status-bar">
+        <span class="status-bar-item">â— <span id="sb-connection">Connected</span></span>
+        <span class="status-bar-item">â± <span id="sb-last-update">0.0s ago</span></span>
+        <span class="status-bar-item">ðŸ–¥ <span id="sb-hosts">1 Host</span></span>
+        <span class="status-bar-item">ðŸ“¦ <span id="sb-vms">0 VMs</span></span>
+        <span class="status-bar-item">â¬› <span id="sb-pods">0 Pods</span></span>
+        <span class="status-bar-item">ðŸ”— <span id="sb-services">0 Services</span></span>
+        <span style="margin-left:auto;">v3.1.0</span>
     </div>
 
-    <script src="app.js"></script>
     <script>
-    //===========================================================================
-    // Dashboard Functions
-    //===========================================================================
-
-    function switchTab(tab) {
-        const output = document.getElementById('output');
-        const dashboard = document.getElementById('dashboard');
-        const layers = document.getElementById('layers');
-        const progress = document.getElementById('progressContainer');
-
-        if (tab === 'dashboard') {
-            output.style.display = 'none';
-            layers.style.display = 'none';
-            progress.style.display = 'none';
-            dashboard.style.display = 'block';
-            loadDashboard();
-        } else {
-            dashboard.style.display = 'none';
-            output.style.display = 'block';
-            layers.style.display = 'flex';
-            progress.style.display = 'none';
+        // ============================================================
+        // STATE
+        // ============================================================
+        const state = {
+            ws: null,
+            connected: false,
+            selectedResource: 'host',
+            selectedItems: new Set(),
+            currentView: 'overview',
+            metrics: {},
+            vms: [],
+            kubernetes: null,
+            events: [],
+            alerts: [],
+            jobs: [],
+            lastUpdate: Date.now(),
+            vmDetails: {}
+        };
+        
+        const wsUrl = `ws://${window.location.hostname}:9877`;
+        
+        // ============================================================
+        // WEBSOCKET
+        // ============================================================
+        function connectWebSocket() {
+            state.ws = new WebSocket(wsUrl);
+            
+            state.ws.onopen = () => {
+                console.log('WebSocket connected');
+                state.connected = true;
+                document.getElementById('status-dot').className = 'status-dot';
+                document.getElementById('sb-connection').textContent = 'Connected';
+                refreshAll();
+            };
+            
+            state.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch(e) {
+                    console.error('Parse error:', e);
+                }
+            };
+            
+            state.ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                state.connected = false;
+                document.getElementById('status-dot').className = 'status-dot warning';
+                document.getElementById('sb-connection').textContent = 'Reconnecting...';
+                setTimeout(connectWebSocket, 2000);
+            };
+            
+            state.ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                state.connected = false;
+            };
         }
-    }
-
-    async function loadDashboard() {
-        const content = document.getElementById('dashboard-content');
-        content.innerHTML = '<div class="placeholder">Loading dashboard...</div>';
-
-        try {
-            const response = await fetch('/api/dashboard');
-            if (!response.ok) throw new Error('API unavailable');
-            const data = await response.json();
-
-            if (data.error) {
-                content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
-                    escapeHtml(data.error) + '</div>';
+        
+        function sendCommand(command, params = {}) {
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                state.ws.send(JSON.stringify({ command, params, request_id: Date.now().toString(36) }));
+            }
+        }
+        
+        function handleMessage(data) {
+            state.lastUpdate = Date.now();
+            
+            switch(data.type) {
+                case 'connected':
+                    console.log('Server connected:', data.data);
+                    break;
+                case 'metrics_update':
+                    state.metrics = data.data;
+                    updateMetricsDisplay(data.data);
+                    updateStatusBar();
+                    break;
+                case 'events_update':
+                    state.events = data.data;
+                    if (state.currentView === 'events') renderEvents();
+                    break;
+                case 'get_metrics_response':
+                    state.metrics = data.data;
+                    updateMetricsDisplay(data.data);
+                    break;
+                case 'get_vms_response':
+                    state.vms = data.data;
+                    if (state.currentView === 'vms') renderVMList();
+                    updateSidebarCounts();
+                    updateStatusBar();
+                    break;
+                case 'get_kubernetes_response':
+                    state.kubernetes = data.data;
+                    if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                    updateSidebarCounts();
+                    updateStatusBar();
+                    break;
+                case 'get_events_response':
+                    state.events = data.data;
+                    if (state.currentView === 'events') renderEvents();
+                    break;
+                case 'get_timeline_response':
+                    if (state.currentView === 'timeline') renderTimeline(data.data);
+                    break;
+                case 'get_alerts_response':
+                    state.alerts = data.data;
+                    updateAlertBell();
+                    break;
+                case 'get_problems_response':
+                    if (state.currentView === 'problems') renderProblems(data.data);
+                    break;
+                case 'get_vm_details_response':
+                    if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
+                        renderVMDrawerDetails(data.data);
+                        state._pendingDrawer = null;
+                    }
+                    break;
+                case 'run_diagnostics_response':
+                    showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
+                    break;
+                case 'run_repair_response':
+                    showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
+                    break;
+                case 'execute_action_response':
+                    if (data.data) {
+                        showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
+                        refreshAll();
+                    }
+                    break;
+                case 'search_response':
+                    renderSearchResults(data.data);
+                    break;
+                case 'get_job_status_response':
+                    // handled elsewhere
+                    break;
+            }
+        }
+        
+        // ============================================================
+        // SIDEBAR TREE
+        // ============================================================
+        function toggleTreeSection(id) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function selectResource(type) {
+            state.selectedResource = type;
+            state.currentView = type;
+            
+            // Update active state
+            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
+            const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
+            if (activeItem) activeItem.classList.add('active');
+            
+            // Load content
+            switch(type) {
+                case 'host': renderHostView(); break;
+                case 'vms': renderVMList(); break;
+                case 'k8s-nodes': renderK8sView('k8s-nodes'); break;
+                case 'k8s-pods': renderK8sView('k8s-pods'); break;
+                case 'k8s-deployments': renderK8sView('k8s-deployments'); break;
+                case 'k8s-services': renderK8sView('k8s-services'); break;
+                case 'k8s-jobs': renderK8sView('k8s-jobs'); break;
+                case 'problems': renderProblems(); break;
+                case 'jobs': renderJobQueue(); break;
+                case 'automation': renderAutomations(); break;
+                case 'timeline': renderTimeline(); break;
+                case 'events': renderEvents(); break;
+                default: renderOverview(); break;
+            }
+        }
+        
+        // ============================================================
+        // VIEW RENDERERS
+        // ============================================================
+        function renderOverview() {
+            const m = state.metrics;
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || { nodes: [], pods: [] };
+            const runningVMs = vms.filter(v => v.state === 'running').length;
+            const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
+            const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
+            
+            document.getElementById('content-area').innerHTML = `
+                <!-- Health Status -->
+                <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
+                    <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">ðŸŸ¢ Infrastructure Healthy</h2>
+                    <div class="cards-grid">
+                        <div class="card">
+                            <div class="card-label">Hosts</div>
+                            <div class="card-value">1</div>
+                            <div class="card-detail">Online</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">VMs</div>
+                            <div class="card-value">${runningVMs}</div>
+                            <div class="card-detail">Running / ${vms.length} Total</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Nodes</div>
+                            <div class="card-value">${readyNodes}</div>
+                            <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Pods</div>
+                            <div class="card-value">${runningPods}</div>
+                            <div class="card-detail">Running / ${k8s.pods.length} Total</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Services</div>
+                            <div class="card-value">${(k8s.services || []).length}</div>
+                            <div class="card-detail">Active</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; display: flex; gap: 16px;">
+                        <span style="color: #ff9800;">âš  Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
+                        <span style="color: #f44336;">ðŸ”´ Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
+                    </div>
+                </div>
+                
+                <!-- Metrics with Sparklines -->
+                <div class="cards-grid">
+                    <div class="card">
+                        <div class="card-label">CPU</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="cpu-value">${m?.cpu || 0}%</div>
+                        <div class="sparkline" id="cpu-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">RAM</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="ram-value">${m?.ram || 0}%</div>
+                        <div class="sparkline" id="ram-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Network</div>
+                        <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
+                        <div class="sparkline" id="net-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Disk</div>
+                        <div style="font-size: 24px; font-weight: bold;">${m?.disk || 0}%</div>
+                        <div class="sparkline" id="disk-sparkline"></div>
+                    </div>
+                </div>
+                
+                <!-- Events & Tasks -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="panel">
+                        <div class="panel-header">Recent Events</div>
+                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-events">
+                            ${(state.events || []).slice(0, 10).map(e => `
+                                <div class="timeline-item">
+                                    <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                    <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? 'âœ“' : e.severity === 'warning' ? 'âš ' : e.severity === 'error' ? 'âœ—' : 'â„¹'}</span>
+                                    <span>${e.message}</span>
+                                </div>
+                            `).join('') || '<div style="color:#6a7090;font-size:12px;">No events</div>'}
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">Current Jobs</div>
+                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-jobs">
+                            <div style="color:#6a7090;font-size:12px;">No active jobs</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Request sparkline data
+            sendCommand('get_metrics_history', { period: '1h' });
+        }
+        
+        function renderHostView() {
+            const m = state.metrics;
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Host Details</div>
+                    <div class="panel-body">
+                        <div class="cards-grid">
+                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${m?.name || window.location.hostname}</div></div>
+                            <div class="card"><div class="card-label">CPU</div><div class="card-value">${m?.cpu || 0}%</div></div>
+                            <div class="card"><div class="card-label">RAM</div><div class="card-value">${m?.ram || 0}%</div><div class="card-detail">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</div></div>
+                            <div class="card"><div class="card-label">Disk</div><div class="card-value">${m?.disk || 0}%</div></div>
+                            <div class="card"><div class="card-label">Load</div><div class="card-value" style="font-size:18px;">${m?.load_avg_1m || 0}</div></div>
+                            <div class="card"><div class="card-label">Processes</div><div class="card-value">${m?.processes || 0}</div></div>
+                            <div class="card"><div class="card-label">Uptime</div><div class="card-value" style="font-size:18px;">${m?.uptime || 'N/A'}</div></div>
+                            <div class="card"><div class="card-label">Swap</div><div class="card-value">${m?.swap || 0}%</div></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderVMList() {
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            const pods = k8s.pods || [];
+            
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Virtual Machines <span style="color:#6a7090;font-weight:normal;">(${vms.length} total)</span></div>
+                    <div class="panel-body" style="padding:0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'vm')"></th>
+                                    <th>Name</th>
+                                    <th>State</th>
+                                    <th>IP</th>
+                                    <th>CPU</th>
+                                    <th>RAM</th>
+                                    <th>Pods</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${vms.map(vm => {
+                                    const podCount = pods.filter(p => p.node === vm.name).length;
+                                    const isPaused = vm.state === 'paused';
+                                    const isRunning = vm.state === 'running';
+                                    return `
+                                    <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
+                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
+                                        <td style="color:#64b5f6;">${vm.name}</td>
+                                        <td><span class="badge ${isRunning ? 'badge-success' : isPaused ? 'badge-warning' : 'badge-error'}">${vm.state}</span></td>
+                                        <td>${vm.ip || 'unknown'}</td>
+                                        <td>${vm.cpu || 'N/A'}</td>
+                                        <td>${vm.ram || 'N/A'}</td>
+                                        <td>${podCount}</td>
+                                        <td onclick="event.stopPropagation()">
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">â–¶</button>
+                                            <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;" title="Shutdown">â¹</button>
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;" title="Snapshot">ðŸ’¾</button>
+                                            ${isRunning ? `<button class="btn btn-warning" onclick="executeAction('vm', '${vm.name}', 'pause')" style="font-size:10px;padding:2px 6px;" title="Pause">â¸</button>` : ''}
+                                            ${isPaused ? `<button class="btn btn-success" onclick="executeAction('vm', '${vm.name}', 'resume')" style="font-size:10px;padding:2px 6px;" title="Resume">â–¶ï¸</button>` : ''}
+                                        </td>
+                                    </tr>
+                                `}).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderK8sView(type) {
+            const k8s = state.kubernetes || {};
+            let data = [];
+            let title = '';
+            let extraColumns = '';
+            let rowActions = (item) => '';
+            
+            switch(type) {
+                case 'k8s-nodes':
+                    data = k8s.nodes || [];
+                    title = 'Nodes';
+                    extraColumns = `<th>Version</th><th>CPU</th><th>Memory</th>`;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="executeAction('node', '${item.name}', 'cordon')" style="font-size:10px;padding:2px 6px;" title="Cordon">â›”</button>
+                        <button class="btn" onclick="executeAction('node', '${item.name}', 'uncordon')" style="font-size:10px;padding:2px 6px;" title="Uncordon">âœ…</button>
+                        <button class="btn btn-danger" onclick="executeAction('node', '${item.name}', 'drain')" style="font-size:10px;padding:2px 6px;" title="Drain">ðŸ’§</button>
+                    `;
+                    break;
+                case 'k8s-pods':
+                    data = k8s.pods || [];
+                    title = 'Pods';
+                    extraColumns = `<th>Node</th><th>Restarts</th>`;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">â–¶</button>
+                        <button class="btn btn-danger" onclick="executeAction('pod', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">ðŸ—‘</button>
+                        <button class="btn" onclick="showPodLogs('${item.namespace}', '${item.name}')" style="font-size:10px;padding:2px 6px;" title="Logs">ðŸ“‹</button>
+                    `;
+                    break;
+                case 'k8s-deployments':
+                    data = k8s.deployments || [];
+                    title = 'Deployments';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn btn-primary" onclick="scaleDeployment('${item.name}')" style="font-size:10px;padding:2px 6px;" title="Scale">ðŸ“ˆ</button>
+                        <button class="btn btn-danger" onclick="executeAction('deployment', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">ðŸ—‘</button>
+                    `;
+                    break;
+                case 'k8s-services':
+                    data = k8s.services || [];
+                    title = 'Services';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="showNotification('Service', 'Details for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Details">â„¹</button>
+                    `;
+                    break;
+                case 'k8s-jobs':
+                    data = (k8s.jobs || []).concat(k8s.cronjobs || []);
+                    title = 'Jobs';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="showNotification('Job', 'Logs for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Logs">ðŸ“‹</button>
+                    `;
+                    break;
+                default:
+                    data = [];
+                    title = 'Unknown';
+            }
+            
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Kubernetes ${title} <span style="color:#6a7090;font-weight:normal;">(${data.length})</span></div>
+                    <div class="panel-body" style="padding:0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                                    <th>Name</th>
+                                    <th>Namespace</th>
+                                    <th>Status</th>
+                                    ${extraColumns}
+                                    <th>Age</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.map(item => `
+                                    <tr class="${state.selectedItems.has('k8s:'+item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:'+item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                                        <td style="color:#64b5f6;">${item.name}</td>
+                                        <td>${item.namespace || '-'}</td>
+                                        <td><span class="badge ${getK8sStatusBadge(item.status || item.state)}">${item.status || item.state || '-'}</span></td>
+                                        ${type === 'k8s-nodes' ? `<td>${item.version || '-'}</td><td>${item.cpu || '-'}</td><td>${item.memory || '-'}</td>` : ''}
+                                        ${type === 'k8s-pods' ? `<td>${item.node || '-'}</td><td>${item.restarts || 0}</td>` : ''}
+                                        <td>${item.age || '-'}</td>
+                                        <td onclick="event.stopPropagation()">
+                                            ${rowActions(item)}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderProblems(problems) {
+            problems = problems || [];
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Detected Problems <span style="color:#6a7090;font-weight:normal;">(${problems.length})</span></div>
+                    <div class="panel-body">
+                        ${problems.length === 0 ? '<div style="color:#6a7090;font-size:12px;padding:20px;text-align:center;">âœ… No problems detected</div>' : ''}
+                        ${problems.map(p => `
+                            <div style="background:#0d1130;padding:14px;border-radius:4px;margin-bottom:10px;border-left:3px solid ${p.severity === 'critical' ? '#f44336' : '#ff9800'};">
+                                <div style="font-weight:bold;color:${p.severity === 'critical' ? '#f44336' : '#ff9800'};margin-bottom:6px;">${p.severity === 'critical' ? 'ðŸ”´' : 'ðŸŸ¡'} ${p.message}</div>
+                                <div style="font-size:11px;color:#8890b0;margin-bottom:10px;">${p.suggested_action || ''}</div>
+                                <button class="btn btn-primary" onclick="runRepair('${p.message}')">ðŸ”§ Fix</button>
+                                <button class="btn" onclick="runDiagnostics()">ðŸ” Diagnose</button>
+                                <button class="btn">Ignore</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderJobQueue() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Job Queue</div>
+                    <div class="panel-body" id="job-queue-content">
+                        <div style="color:#6a7090;font-size:12px;">Loading jobs...</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderAutomations() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Automation Rules</div>
+                    <div class="panel-body">
+                        <div class="job-item">
+                            <div style="font-weight:bold;color:#64b5f6;">Pod CrashLoop Recovery</div>
+                            <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
+                            <div style="font-size:11px;color:#6a7090;">Actions: Restart â†’ Wait â†’ Verify</div>
+                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                <input type="checkbox" checked> Enabled
+                            </label>
+                        </div>
+                        <div class="job-item">
+                            <div style="font-weight:bold;color:#64b5f6;">VM Recovery</div>
+                            <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
+                            <div style="font-size:11px;color:#6a7090;">Actions: Ping â†’ SSH â†’ Restart Network â†’ Reboot</div>
+                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                <input type="checkbox" checked> Enabled
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderTimeline(data) {
+            data = data || [];
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Event Timeline</div>
+                    <div class="panel-body" style="max-height:600px;overflow-y:auto;">
+                        ${data.map(e => `
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? 'âœ“' : e.severity === 'warning' ? 'âš ' : 'âœ—'}</span>
+                                <div>
+                                    <div style="font-weight:500;">${e.type.toUpperCase()}</div>
+                                    <div style="font-size:11px;color:#8890b0;">${e.message}</div>
+                                </div>
+                            </div>
+                        `).join('') || '<div style="color:#6a7090;padding:20px;text-align:center;">No events in timeline</div>'}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderEvents() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Live Event Stream</div>
+                    <div class="panel-body" style="max-height:600px;overflow-y:auto;" id="live-event-stream">
+                        ${(state.events || []).map(e => `
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? 'âœ“' : e.severity === 'warning' ? 'âš ' : 'âœ—'}</span>
+                                <span>${e.message}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // ============================================================
+        // DRAWER
+        // ============================================================
+        function openDrawer(type, name) {
+            const drawer = document.getElementById('drawer');
+            const overlay = document.getElementById('drawer-overlay');
+            const title = document.getElementById('drawer-title');
+            const body = document.getElementById('drawer-body');
+            const actions = document.getElementById('drawer-actions');
+            
+            title.textContent = name;
+            
+            if (type === 'vm') {
+                // Show loading state
+                body.innerHTML = `<div style="color:#6a7090;text-align:center;padding:40px;">Loading details for ${name}...</div>`;
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="executeAction('vm', '${name}', 'restart')">â–¶ Restart</button>
+                    <button class="btn btn-danger" onclick="executeAction('vm', '${name}', 'shutdown')">â¹ Shutdown</button>
+                    <button class="btn" onclick="executeAction('vm', '${name}', 'snapshot')">ðŸ’¾ Snapshot</button>
+                    <button class="btn btn-warning" onclick="executeAction('vm', '${name}', 'pause')">â¸ Pause</button>
+                    <button class="btn btn-success" onclick="executeAction('vm', '${name}', 'resume')">â–¶ï¸ Resume</button>
+                `;
+                
+                // Fetch VM details
+                state._pendingDrawer = { type: 'vm', name: name };
+                sendCommand('get_vm_details', { name: name });
+                
+            } else if (type === 'k8s-nodes') {
+                body.innerHTML = `
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                        <span class="badge badge-success">Ready</span>
+                    </div>
+                    <div style="margin-bottom:8px;"><strong>Node:</strong> ${name}</div>
+                `;
+                actions.innerHTML = `
+                    <button class="btn" onclick="executeAction('node', '${name}', 'cordon')">â›” Cordon</button>
+                    <button class="btn" onclick="executeAction('node', '${name}', 'uncordon')">âœ… Uncordon</button>
+                    <button class="btn btn-danger" onclick="executeAction('node', '${name}', 'drain')">ðŸ’§ Drain</button>
+                `;
+            } else if (type === 'k8s-pods') {
+                const pod = (state.kubernetes?.pods || []).find(p => p.name === name);
+                body.innerHTML = `
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                        <span class="badge ${getK8sStatusBadge(pod?.status)}">${pod?.status || 'Unknown'}</span>
+                    </div>
+                    <div style="margin-bottom:8px;"><strong>Name:</strong> ${name}</div>
+                    <div style="margin-bottom:8px;"><strong>Namespace:</strong> ${pod?.namespace || '-'}</div>
+                    <div style="margin-bottom:8px;"><strong>Node:</strong> ${pod?.node || '-'}</div>
+                    <div style="margin-bottom:8px;"><strong>Restarts:</strong> ${pod?.restarts || 0}</div>
+                    <div style="margin-bottom:8px;"><strong>Age:</strong> ${pod?.age || '-'}</div>
+                `;
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="executeAction('pod', '${name}', 'restart')">â–¶ Restart</button>
+                    <button class="btn btn-danger" onclick="executeAction('pod', '${name}', 'delete')">ðŸ—‘ Delete</button>
+                    <button class="btn" onclick="showPodLogs('${pod?.namespace || 'default'}', '${name}')">ðŸ“‹ Logs</button>
+                `;
+            } else if (type === 'k8s-deployments') {
+                body.innerHTML = `
+                    <div style="margin-bottom:8px;"><strong>Deployment:</strong> ${name}</div>
+                `;
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="scaleDeployment('${name}')">ðŸ“ˆ Scale</button>
+                    <button class="btn btn-danger" onclick="executeAction('deployment', '${name}', 'delete')">ðŸ—‘ Delete</button>
+                `;
+            } else {
+                body.innerHTML = `<div>Details for ${type}: ${name}</div>`;
+                actions.innerHTML = '';
+            }
+            
+            drawer.classList.add('open');
+            overlay.classList.add('open');
+        }
+        
+        function renderVMDrawerDetails(details) {
+            const body = document.getElementById('drawer-body');
+            if (!body) return;
+            
+            const podsOnNode = (state.kubernetes?.pods || []).filter(p => p.node === details.name);
+            
+            body.innerHTML = `
+                <div style="margin-bottom:16px;">
+                    <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                    <span class="badge ${details.state === 'running' ? 'badge-success' : details.state === 'paused' ? 'badge-warning' : 'badge-error'}">${details.state}</span>
+                </div>
+                <div class="cards-grid" style="grid-template-columns:1fr 1fr;">
+                    <div class="card">
+                        <div class="card-label">vCPUs</div>
+                        <div style="font-size:18px;">${details.vcpus || 'N/A'}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Memory</div>
+                        <div style="font-size:18px;">${details.memory?.used || 'N/A'}</div>
+                        <div class="card-detail">Max: ${details.memory?.max || 'N/A'}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Disks</div>
+                        <div style="font-size:18px;">${details.disks?.length || 0}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Interfaces</div>
+                        <div style="font-size:18px;">${details.interfaces?.length || 0}</div>
+                    </div>
+                </div>
+                
+                ${podsOnNode.length > 0 ? `
+                    <div style="margin-top:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:8px;">ðŸ“¦ PODS ON THIS NODE (${podsOnNode.length})</div>
+                        ${podsOnNode.map(p => `
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                                <span style="color:#64b5f6;cursor:pointer;" onclick="openDrawer('k8s-pods', '${p.name}')">${p.name}</span>
+                                <span class="badge ${getK8sStatusBadge(p.status)}">${p.status}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                
+                ${details.snapshots?.length > 0 ? `
+                    <div style="margin-top:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:8px;">ðŸ’¾ SNAPSHOTS</div>
+                        ${details.snapshots.map(s => `
+                            <div style="font-size:12px;padding:4px 0;color:var(--text-secondary);">${s}</div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            `;
+        }
+        
+        function closeDrawer() {
+            document.getElementById('drawer').classList.remove('open');
+            document.getElementById('drawer-overlay').classList.remove('open');
+            state._pendingDrawer = null;
+        }
+        
+        // ============================================================
+        // NEW FUNCTIONS FOR SCALING, PAUSE/RESUME, NODE ACTIONS
+        // ============================================================
+        function scaleDeployment(name) {
+            const replicas = prompt(`Enter new replica count for deployment "${name}":`, "3");
+            if (replicas === null) return;
+            const num = parseInt(replicas);
+            if (isNaN(num) || num < 0) {
+                alert("Please enter a valid number");
                 return;
             }
-
-            renderDashboard(data);
-        } catch(e) {
-            content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
-                'Dashboard unavailable. Ensure network-recover-dashboard is installed.</div>';
-        }
-    }
-
-    function renderDashboard(data) {
-        if (!data || !data.host) {
-            document.getElementById('dashboard-content').innerHTML = 
-                '<div class="placeholder">No data received.</div>';
-            return;
-        }
-
-        const memPct = data.host.memory.percent || 0;
-        const diskPct = data.host.disk.percent || 0;
-
-        let html = '';
-
-        // Host Section
-        html += '<div class="dashboard-section">';
-        html += '<h3>ðŸ–¥ï¸ Host: ' + escapeHtml(data.host.name) + '</h3>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Memory</span>';
-        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + memPct + '%"></div></div>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.memory.used) + ' / ' + 
-            escapeHtml(data.host.memory.total) + 
-            ' (' + memPct + '%)</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Swap</span>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.swap.used) + ' / ' + 
-            escapeHtml(data.host.swap.total) + '</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Disk</span>';
-        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + diskPct + '%"></div></div>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.disk.info) + '</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Load</span>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.load) + '</span>';
-        html += '</div>';
-        html += '</div>';
-
-        // VM Sections
-        if (data.vms && data.vms.length > 0) {
-            data.vms.forEach(vm => {
-                const vmMemPct = extractPercent(vm.memory);
-                html += '<div class="dashboard-section vm-section">';
-                html += '<h3>ðŸ–¥ï¸ VM: ' + escapeHtml(vm.ip) + '</h3>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Memory</span>';
-                html += '<div class="resource-bar"><div class="resource-fill" style="width:' + vmMemPct + '%"></div></div>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.memory) + '</span>';
-                html += '</div>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Disk</span>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.disk) + '</span>';
-                html += '</div>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Load</span>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.load) + '</span>';
-                html += '</div>';
-                html += '</div>';
+            sendCommand('execute_action', {
+                resource_type: 'deployment',
+                resource_name: name,
+                action: 'scale',
+                replicas: num
             });
+            showNotification('Scale', `Scaling ${name} to ${num} replicas`, 'info');
         }
-
-        // K3s Section
-        if (data.k3s && data.k3s.status === 'available' && data.k3s.nodes) {
-            html += '<div class="dashboard-section k3s-section">';
-            html += '<h3>â˜¸ï¸ K3s Cluster</h3>';
-            html += '<table class="k3s-table">';
-            html += '<tr><th>Node</th><th>Status</th><th>Role</th><th>CPU</th><th>Memory</th></tr>';
-            data.k3s.nodes.forEach(node => {
-                const statusClass = node.status === 'Ready' ? 'status-ready' : 'status-not-ready';
-                html += '<tr>';
-                html += '<td>' + escapeHtml(node.name) + '</td>';
-                html += '<td class="' + statusClass + '">' + 
-                    escapeHtml(node.status) + '</td>';
-                html += '<td>' + escapeHtml(node.role) + '</td>';
-                html += '<td>' + escapeHtml(node.cpu || 'N/A') + '</td>';
-                html += '<td>' + escapeHtml(node.memory || 'N/A') + '</td>';
-                html += '</tr>';
+        
+        function showPodLogs(namespace, name) {
+            // This would need a real terminal/log viewer implementation
+            // For now, just show a notification
+            showNotification('Logs', `Viewing logs for ${namespace}/${name}`, 'info');
+            // In a real implementation, you'd open a new panel or fetch logs
+            alert(`Logs for ${namespace}/${name}\n\n(Log viewer would appear here - implement with kubectl logs)`);
+        }
+        
+        // ============================================================
+        // ACTIONS
+        // ============================================================
+        function refreshAll() {
+            sendCommand('get_metrics');
+            sendCommand('get_vms');
+            sendCommand('get_kubernetes');
+            sendCommand('get_events');
+            sendCommand('get_alerts');
+            sendCommand('get_problems');
+        }
+        
+        function runDiagnostics() {
+            sendCommand('run_diagnostics');
+            showNotification('Diagnostics', 'Running...', 'info');
+        }
+        
+        function runRepair(target) {
+            sendCommand('run_repair', { target: target || '' });
+            showNotification('Repair', 'Starting repair...', 'info');
+        }
+        
+        function createSnapshot() {
+            const vmName = prompt('Enter VM name for snapshot:');
+            if (vmName) {
+                sendCommand('execute_action', { resource_type: 'vm', resource_name: vmName, action: 'snapshot' });
+            }
+        }
+        
+        function executeAction(type, name, action) {
+            if (!name || name === '') {
+                showNotification('Error', 'Resource name is required', 'error');
+                return;
+            }
+            sendCommand('execute_action', { resource_type: type, resource_name: name, action: action });
+            showNotification('Action', `${action} on ${type} ${name} started`, 'info');
+        }
+        
+        function emergencyMode() {
+            if (confirm('âš  EMERGENCY MODE - This will restart failed pods, repair networking, and flush caches. Continue?')) {
+                runRepair('all');
+                showNotification('Emergency', 'Emergency mode activated', 'warning');
+            }
+        }
+        
+        // ============================================================
+        // SEARCH
+        // ============================================================
+        function handleSearch(query) {
+            if (query.length >= 2) {
+                sendCommand('search', { query });
+            } else {
+                document.getElementById('search-results').classList.remove('show');
+            }
+        }
+        
+        function renderSearchResults(results) {
+            const container = document.getElementById('search-results');
+            if (!results || results.length === 0) {
+                container.innerHTML = '<div class="search-result-item" style="color:#6a7090;">No results</div>';
+            } else {
+                container.innerHTML = results.map(r => `
+                    <div class="search-result-item" onclick="navigateToResource('${r.path}')">
+                        <span>${r.name}</span>
+                        <span class="type-badge">${r.type}</span>
+                    </div>
+                `).join('');
+            }
+            container.classList.add('show');
+        }
+        
+        function navigateToResource(path) {
+            document.getElementById('search-results').classList.remove('show');
+            document.getElementById('global-search').value = '';
+            // Navigate based on path
+            if (path.startsWith('vm/')) {
+                selectResource('vms');
+            } else if (path.startsWith('kubernetes/')) {
+                const parts = path.split('/');
+                if (parts.length >= 3) {
+                    selectResource('k8s-' + parts[1]);
+                }
+            } else if (path === 'host') {
+                selectResource('host');
+            }
+        }
+        
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        function updateMetricsDisplay(m) {
+            const cpuEl = document.getElementById('cpu-value');
+            const ramEl = document.getElementById('ram-value');
+            if (cpuEl) cpuEl.textContent = (m?.cpu || 0) + '%';
+            if (ramEl) ramEl.textContent = (m?.ram || 0) + '%';
+        }
+        
+        function updateStatusBar() {
+            const elapsed = ((Date.now() - state.lastUpdate) / 1000).toFixed(1);
+            document.getElementById('sb-last-update').textContent = elapsed + 's ago';
+            
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            document.getElementById('sb-vms').textContent = vms.length + ' VMs';
+            document.getElementById('sb-pods').textContent = (k8s.pods || []).length + ' Pods';
+            document.getElementById('sb-services').textContent = (k8s.services || []).length + ' Services';
+        }
+        
+        function updateSidebarCounts() {
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            document.getElementById('vm-count-sidebar').textContent = vms.length;
+            document.getElementById('node-count-sidebar').textContent = (k8s.nodes || []).length;
+            document.getElementById('pod-count-sidebar').textContent = (k8s.pods || []).length;
+            document.getElementById('problem-count-sidebar').textContent = state.alerts.filter(a => !a.acknowledged).length;
+        }
+        
+        function updateAlertBell() {
+            const count = state.alerts.filter(a => !a.acknowledged).length;
+            const badge = document.getElementById('alert-count');
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
+        function toggleAlerts() {
+            const dropdown = document.getElementById('alerts-dropdown');
+            dropdown.innerHTML = state.alerts.map(a => `
+                <div class="alert-item" style="border-left:3px solid ${a.severity === 'critical' ? '#f44336' : '#ff9800'};">
+                    <div style="font-weight:bold;">${a.severity.toUpperCase()}</div>
+                    <div style="font-size:11px;">${a.message}</div>
+                    <div style="font-size:10px;color:#6a7090;">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                    ${!a.acknowledged ? `<button class="btn" onclick="acknowledgeAlert('${a.id}')" style="font-size:10px;padding:2px 6px;margin-top:4px;">âœ“ Acknowledge</button>` : '<span style="font-size:10px;color:var(--success);">âœ“ Acknowledged</span>'}
+                </div>
+            `).join('') || '<div class="alert-item" style="color:#6a7090;">No alerts</div>';
+            dropdown.classList.toggle('show');
+        }
+        
+        function acknowledgeAlert(alertId) {
+            sendCommand('acknowledge_alert', { alert_id: alertId });
+            toggleAlerts();
+        }
+        
+        function showNotification(title, message, type) {
+            console.log(`[${type}] ${title}: ${message}`);
+            // Toast notification would go here
+        }
+        
+        function getK8sStatusBadge(status) {
+            const s = (status || '').toLowerCase();
+            if (s.includes('running') || s.includes('ready') || s.includes('bound')) return 'badge-success';
+            if (s.includes('pending') || s.includes('waiting')) return 'badge-warning';
+            if (s.includes('fail') || s.includes('error') || s.includes('crash') || s.includes('notready')) return 'badge-error';
+            return 'badge-info';
+        }
+        
+        function toggleSelectAll(checkbox, prefix) {
+            const checkboxes = document.querySelectorAll(`input[type="checkbox"]`);
+            checkboxes.forEach(cb => {
+                if (cb !== checkbox) {
+                    cb.checked = checkbox.checked;
+                }
             });
-            html += '</table></div>';
+            // Update selected items
+            document.querySelectorAll(`input[type="checkbox"]:checked`).forEach(cb => {
+                const name = cb.closest('tr')?.querySelector('td:nth-child(2)')?.textContent?.trim();
+                if (name) {
+                    state.selectedItems.add(prefix + ':' + name);
+                }
+            });
+            updateMultiselectBar();
         }
-
-        document.getElementById('dashboard-content').innerHTML = html;
-    }
-
-    function extractPercent(str) {
-        if (!str) return 0;
-        const match = str.match(/(\d+)%/);
-        return match ? parseInt(match[1]) : 0;
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
-    // Load dashboard on page load if it was the last active tab
-    document.addEventListener('DOMContentLoaded', function() {
-        // Pre-fetch dashboard data so it's ready when user switches tabs
-        fetch('/api/dashboard').catch(() => {});
-    });
+        
+        function toggleSelectItem(id) {
+            if (state.selectedItems.has(id)) {
+                state.selectedItems.delete(id);
+            } else {
+                state.selectedItems.add(id);
+            }
+            updateMultiselectBar();
+        }
+        
+        function updateMultiselectBar() {
+            const bar = document.getElementById('multiselect-bar');
+            const count = document.getElementById('selected-count');
+            if (state.selectedItems.size > 0) {
+                bar.classList.add('show');
+                count.textContent = state.selectedItems.size + ' selected';
+            } else {
+                bar.classList.remove('show');
+            }
+        }
+        
+        function clearSelection() {
+            state.selectedItems.clear();
+            updateMultiselectBar();
+            document.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        }
+        
+        function bulkRestart() {
+            state.selectedItems.forEach(id => {
+                const parts = id.split(':');
+                const type = parts[0];
+                const name = parts.slice(1).join(':');
+                executeAction(type, name, 'restart');
+            });
+            setTimeout(() => clearSelection(), 1000);
+        }
+        
+        function bulkDelete() {
+            if (confirm(`Delete ${state.selectedItems.size} items?`)) {
+                state.selectedItems.forEach(id => {
+                    const parts = id.split(':');
+                    const type = parts[0];
+                    const name = parts.slice(1).join(':');
+                    executeAction(type, name, 'delete');
+                });
+                setTimeout(() => clearSelection(), 1000);
+            }
+        }
+        
+        function toggleTerminal() {
+            const terminal = document.getElementById('terminal');
+            terminal.style.display = terminal.style.display === 'none' ? 'block' : 'none';
+            if (terminal.style.display === 'block') {
+                document.getElementById('terminal-output').innerHTML += `
+                    <div class="terminal-line"><span class="terminal-prompt">$ </span>Terminal ready</div>
+                `;
+            }
+        }
+        
+        function showAuditLog() {
+            sendCommand('get_audit_log');
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Audit Log</div>
+                    <div class="panel-body" id="audit-content">
+                        <div style="color:#6a7090;">Loading...</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function restartSelected() {
+            if (state.selectedItems.size === 0) {
+                alert('Select items first by checking the boxes');
+                return;
+            }
+            bulkRestart();
+        }
+        
+        // ============================================================
+        // KEYBOARD SHORTCUTS
+        // ============================================================
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('global-search').focus();
+            }
+            if (e.key === 'Escape') {
+                closeDrawer();
+                document.getElementById('search-results').classList.remove('show');
+                document.getElementById('alerts-dropdown').classList.remove('show');
+            }
+        });
+        
+        // Close search results on outside click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-container')) {
+                document.getElementById('search-results').classList.remove('show');
+            }
+            if (!e.target.closest('.alert-bell') && !e.target.closest('.alerts-dropdown')) {
+                document.getElementById('alerts-dropdown').classList.remove('show');
+            }
+        });
+        
+        // ============================================================
+        // INITIALIZATION
+        // ============================================================
+        function init() {
+            connectWebSocket();
+            renderOverview();
+            
+            // Periodic refresh
+            setInterval(() => {
+                if (state.connected) {
+                    sendCommand('get_metrics');
+                    sendCommand('get_vms');
+                    sendCommand('get_kubernetes');
+                    sendCommand('get_events');
+                    sendCommand('get_alerts');
+                }
+            }, 5000);
+        }
+        
+        // Start the application
+        document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
@@ -6414,6 +9327,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- b5f2ae8ac7023db3da24df62ce589d8564f6ec [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 07/
 |   |   |   |-- afdae949b872e69982c5c81881228588e9dce3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- bcc0cb0b164c7f6d04b5a4dde14a0760714738 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 09/
 |   |   |   |-- ff166bdecd39423ccc918aca6b623d410a0b27 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 0a/
@@ -6438,6 +9352,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- 12/
 |   |   |   |-- 78417d348f6ee47f01eb5c7062421be69730ed [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 13/
+|   |   |   |-- 4b5a193ce29bbcf7b2b0f2504f60af26d20292 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- e7d539bcc5a6331e1769a0f794b552c620c360 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 14/
 |   |   |   |-- 04667de86d5d38915255df2b73601117120d25 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6518,6 +9433,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- 38/
 |   |   |   |-- 4eaddc4621c7732698d6c64278002b3843a402 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 39/
+|   |   |   |-- 970da638ed027933e593c43e0ab519e65921ea [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- ca4f3fa6bfd5cb971054181cbbf0008a5ebaa7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 3b/
 |   |   |   |-- 5b53ef05104a20919a9e6e435eb4fe360d14b9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6593,6 +9509,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- 393583ce77d56b57c2effcd14e92e1ad62aaf0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 5e/
 |   |   |   |-- 169b0a03a938e277084c46e9c8f98bf881dfd8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- 6fd7e2900663b35ae95d88a88a48500a5af251 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 74057bdf3a22ac285d07a309059bf2073e17df [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- c3dd3c7ddaa675de006eb24cfa1be2fbcfce68 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- c490d221a11e43b114d37c56a0462ac29a58d7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6643,6 +9560,8 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- 31be7aa1e31c21841912cf339c4594ea251f98 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 3e0ff6151991041bc57a126b66d5061f62972b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 6445fb0cd49ebb590c974b70a112dc105b1397 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |-- 73/
+|   |   |   |-- 8a9e6d0e812a17cd43295bcfc76b65ef393d03 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- 74/
 |   |   |   |-- 23c83da2dc45a312219e5b828d18b6110ee4d8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 7bd61e0c40b5764f576bf36edb4dacd7520a3e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6777,6 +9696,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- f07d81d17eede79e2eb6a24876fc8cf5c5cae4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- a8/
 |   |   |   |-- 50abd8c3817903308c678389fce1780b8c564c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- 7045904fe56709bcdf26d9bdc4ca0b13f28133 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- a9/
 |   |   |   |-- 33f692a85e7a01157c44622e47decdd1c11659 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 6bc2afe63513cff0e9f32aa2a0e4f427871f69 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6804,6 +9724,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- b2/
 |   |   |   |-- df838f5f59dcb6aef6e61561fff3d3c3bf0af1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- b3/
+|   |   |   |-- 0a97785079f9583606a704fe34a7c5163484b8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 0db9881ab54eec8e262bf8f6980206aa308b17 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- c0694f8418f0f71c712418d67e720946af187a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- b5/
@@ -6917,6 +9838,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |   |-- 743c17621ded41e084b5056c65fbbb219a9449 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- bb1fbbe62f08e1737ee903eab0dfc35806a0a8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- c05ed7a08ef1478cf23ae8ac146580063ffd9c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- fb70363966bc58d1e45e6d274e631fce0d8287 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- e5/
 |   |   |   |-- 3f47926056d2aaea8be3f3c336d177e0648f92 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- e6/
@@ -6965,6 +9887,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- f7/
 |   |   |   |-- e3f4550d98c0aa9560d40370a844a55563bdda [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- f8/
+|   |   |   |-- 51a2f0ce9315cb3124231fa91c7f091152a78e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- f1ac5cd61b40676453f50acec476d777ba59c3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- f9/
 |   |   |   |-- 67c2045553bd9ea3ed7e64e35d02d444df7c11 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -6977,6 +9900,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |   |-- fc/
 |   |   |   |-- 46a495113a556ce3d53e142a52d2b22f97d54f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- 60322e7c65bc106314868a602c81763b61b0cc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
+|   |   |   |-- cfeeb877f3ca0a12af1366bebdb6fadb783f24 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |-- fd/
 |   |   |   |-- 0076d53a433b5a7b20e42e8a6450d490bac7b0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
 |   |   |   |-- a8c5eefef4c49d38ec3f7cac376151c060ff13 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
@@ -7058,5 +9982,5 @@ EXPORT COMPLETE
 Files with content exported: 40
 Complete folder structure shown above
 Output file: F:\Linux_Network_Manager\network-recover\project_export.txt
-Completed: 2026-07-24 10:26:18
+Completed: 2026-07-24 12:16:01
 ========================================

@@ -21,7 +21,7 @@
             --error: #f44336;
             --info: #2196f3;
             --sidebar-width: 280px;
-            --drawer-width: 420px;
+            --drawer-width: 480px;
             --header-height: 48px;
             --statusbar-height: 28px;
             --actionbar-height: 44px;
@@ -185,6 +185,7 @@
             gap: 4px;
             border-bottom: 1px solid var(--border);
             flex-shrink: 0;
+            overflow-x: auto;
         }
         .action-bar-btn {
             padding: 6px 12px;
@@ -216,6 +217,7 @@
             height: 20px;
             background: var(--border);
             margin: 0 4px;
+            flex-shrink: 0;
         }
         
         /* ============ MAIN LAYOUT ============ */
@@ -526,6 +528,8 @@
         .btn-danger { background: var(--error); border-color: var(--error); color: white; }
         .btn-danger:hover { background: #d32f2f; }
         .btn-success { background: var(--success); border-color: var(--success); color: white; }
+        .btn-warning { background: var(--warning); border-color: var(--warning); color: white; }
+        .btn-warning:hover { background: #e68900; }
         
         /* ============ STATUS BAR ============ */
         .status-bar {
@@ -539,11 +543,13 @@
             color: var(--text-muted);
             border-top: 1px solid var(--border);
             flex-shrink: 0;
+            overflow-x: auto;
         }
         .status-bar-item {
             display: flex;
             align-items: center;
             gap: 4px;
+            white-space: nowrap;
         }
         
         /* Job queue */
@@ -618,6 +624,22 @@
         }
         .terminal-line { white-space: pre-wrap; }
         .terminal-prompt { color: var(--accent); }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
     </style>
 </head>
 <body>
@@ -758,7 +780,7 @@
         <span class="status-bar-item">📦 <span id="sb-vms">0 VMs</span></span>
         <span class="status-bar-item">⬛ <span id="sb-pods">0 Pods</span></span>
         <span class="status-bar-item">🔗 <span id="sb-services">0 Services</span></span>
-        <span style="margin-left:auto;">v3.0.0</span>
+        <span style="margin-left:auto;">v3.1.0</span>
     </div>
 
     <script>
@@ -777,7 +799,8 @@
             events: [],
             alerts: [],
             jobs: [],
-            lastUpdate: Date.now()
+            lastUpdate: Date.now(),
+            vmDetails: {}
         };
         
         const wsUrl = `ws://${window.location.hostname}:9877`;
@@ -849,11 +872,13 @@
                     state.vms = data.data;
                     if (state.currentView === 'vms') renderVMList();
                     updateSidebarCounts();
+                    updateStatusBar();
                     break;
                 case 'get_kubernetes_response':
                     state.kubernetes = data.data;
                     if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
                     updateSidebarCounts();
+                    updateStatusBar();
                     break;
                 case 'get_events_response':
                     state.events = data.data;
@@ -869,6 +894,12 @@
                 case 'get_problems_response':
                     if (state.currentView === 'problems') renderProblems(data.data);
                     break;
+                case 'get_vm_details_response':
+                    if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
+                        renderVMDrawerDetails(data.data);
+                        state._pendingDrawer = null;
+                    }
+                    break;
                 case 'run_diagnostics_response':
                     showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
                     break;
@@ -876,10 +907,16 @@
                     showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
                     break;
                 case 'execute_action_response':
-                    if (data.data) showNotification('Action', `Job ${data.data.id} started`, 'info');
+                    if (data.data) {
+                        showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
+                        refreshAll();
+                    }
                     break;
                 case 'search_response':
                     renderSearchResults(data.data);
+                    break;
+                case 'get_job_status_response':
+                    // handled elsewhere
                     break;
             }
         }
@@ -898,7 +935,8 @@
             
             // Update active state
             document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
-            event.target.closest('.tree-item')?.classList.add('active');
+            const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
+            if (activeItem) activeItem.classList.add('active');
             
             // Load content
             switch(type) {
@@ -926,6 +964,8 @@
             const vms = state.vms || [];
             const k8s = state.kubernetes || { nodes: [], pods: [] };
             const runningVMs = vms.filter(v => v.state === 'running').length;
+            const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
+            const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
             
             document.getElementById('content-area').innerHTML = `
                 <!-- Health Status -->
@@ -940,27 +980,27 @@
                         <div class="card">
                             <div class="card-label">VMs</div>
                             <div class="card-value">${runningVMs}</div>
-                            <div class="card-detail">Running</div>
+                            <div class="card-detail">Running / ${vms.length} Total</div>
                         </div>
                         <div class="card">
                             <div class="card-label">Nodes</div>
-                            <div class="card-value">${k8s.nodes.filter(n => n.status === 'Ready').length}</div>
+                            <div class="card-value">${readyNodes}</div>
                             <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
                         </div>
                         <div class="card">
                             <div class="card-label">Pods</div>
-                            <div class="card-value">${k8s.pods.filter(p => p.status === 'Running').length}</div>
+                            <div class="card-value">${runningPods}</div>
                             <div class="card-detail">Running / ${k8s.pods.length} Total</div>
                         </div>
                         <div class="card">
                             <div class="card-label">Services</div>
                             <div class="card-value">${(k8s.services || []).length}</div>
-                            <div class="card-detail">Healthy</div>
+                            <div class="card-detail">Active</div>
                         </div>
                     </div>
                     <div style="margin-top: 12px; display: flex; gap: 16px;">
-                        <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning').length}</span>
-                        <span style="color: #f44336;">Critical: ${state.alerts.filter(a => a.severity === 'critical').length}</span>
+                        <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
+                        <span style="color: #f44336;">🔴 Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
                     </div>
                 </div>
                 
@@ -1017,44 +1057,30 @@
         
         function renderHostView() {
             const m = state.metrics;
-            const host = state.metrics;
             document.getElementById('content-area').innerHTML = `
                 <div class="panel">
                     <div class="panel-header">Host Details</div>
                     <div class="panel-body">
                         <div class="cards-grid">
-                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${host?.name || window.location.hostname}</div></div>
+                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${m?.name || window.location.hostname}</div></div>
                             <div class="card"><div class="card-label">CPU</div><div class="card-value">${m?.cpu || 0}%</div></div>
                             <div class="card"><div class="card-label">RAM</div><div class="card-value">${m?.ram || 0}%</div><div class="card-detail">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</div></div>
                             <div class="card"><div class="card-label">Disk</div><div class="card-value">${m?.disk || 0}%</div></div>
                             <div class="card"><div class="card-label">Load</div><div class="card-value" style="font-size:18px;">${m?.load_avg_1m || 0}</div></div>
                             <div class="card"><div class="card-label">Processes</div><div class="card-value">${m?.processes || 0}</div></div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Tabs -->
-                <div class="tabs">
-                    <button class="tab active" onclick="switchTab('metrics')">Metrics</button>
-                    <button class="tab" onclick="switchTab('processes')">Processes</button>
-                    <button class="tab" onclick="switchTab('network')">Network</button>
-                    <button class="tab" onclick="switchTab('logs')">Logs</button>
-                </div>
-                <div id="tab-content">
-                    <div id="tab-metrics">
-                        <div class="cards-grid">
-                            <div class="card"><div class="card-label">CPU (1h)</div><div class="sparkline" id="spark-cpu"></div></div>
-                            <div class="card"><div class="card-label">RAM (1h)</div><div class="sparkline" id="spark-ram"></div></div>
-                            <div class="card"><div class="card-label">Network (1h)</div><div class="sparkline" id="spark-net"></div></div>
+                            <div class="card"><div class="card-label">Uptime</div><div class="card-value" style="font-size:18px;">${m?.uptime || 'N/A'}</div></div>
+                            <div class="card"><div class="card-label">Swap</div><div class="card-value">${m?.swap || 0}%</div></div>
                         </div>
                     </div>
                 </div>
             `;
-            sendCommand('get_metrics_history', { period: '1h' });
         }
         
         function renderVMList() {
             const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            const pods = k8s.pods || [];
+            
             document.getElementById('content-area').innerHTML = `
                 <div class="panel">
                     <div class="panel-header">Virtual Machines <span style="color:#6a7090;font-weight:normal;">(${vms.length} total)</span></div>
@@ -1068,25 +1094,33 @@
                                     <th>IP</th>
                                     <th>CPU</th>
                                     <th>RAM</th>
+                                    <th>Pods</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${vms.map(vm => `
+                                ${vms.map(vm => {
+                                    const podCount = pods.filter(p => p.node === vm.name).length;
+                                    const isPaused = vm.state === 'paused';
+                                    const isRunning = vm.state === 'running';
+                                    return `
                                     <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
                                         <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
                                         <td style="color:#64b5f6;">${vm.name}</td>
-                                        <td><span class="badge ${vm.state === 'running' ? 'badge-success' : 'badge-error'}">${vm.state}</span></td>
+                                        <td><span class="badge ${isRunning ? 'badge-success' : isPaused ? 'badge-warning' : 'badge-error'}">${vm.state}</span></td>
                                         <td>${vm.ip || 'unknown'}</td>
                                         <td>${vm.cpu || 'N/A'}</td>
                                         <td>${vm.ram || 'N/A'}</td>
+                                        <td>${podCount}</td>
                                         <td onclick="event.stopPropagation()">
-                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;">▶</button>
-                                            <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;">⏹</button>
-                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;">💾</button>
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">▶</button>
+                                            <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;" title="Shutdown">⏹</button>
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;" title="Snapshot">💾</button>
+                                            ${isRunning ? `<button class="btn btn-warning" onclick="executeAction('vm', '${vm.name}', 'pause')" style="font-size:10px;padding:2px 6px;" title="Pause">⏸</button>` : ''}
+                                            ${isPaused ? `<button class="btn btn-success" onclick="executeAction('vm', '${vm.name}', 'resume')" style="font-size:10px;padding:2px 6px;" title="Resume">▶️</button>` : ''}
                                         </td>
                                     </tr>
-                                `).join('')}
+                                `}).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -1098,13 +1132,58 @@
             const k8s = state.kubernetes || {};
             let data = [];
             let title = '';
+            let extraColumns = '';
+            let rowActions = (item) => '';
             
             switch(type) {
-                case 'k8s-nodes': data = k8s.nodes || []; title = 'Nodes'; break;
-                case 'k8s-pods': data = k8s.pods || []; title = 'Pods'; break;
-                case 'k8s-deployments': data = k8s.deployments || []; title = 'Deployments'; break;
-                case 'k8s-services': data = k8s.services || []; title = 'Services'; break;
-                case 'k8s-jobs': data = (k8s.jobs || []).concat(k8s.cronjobs || []); title = 'Jobs'; break;
+                case 'k8s-nodes':
+                    data = k8s.nodes || [];
+                    title = 'Nodes';
+                    extraColumns = `<th>Version</th><th>CPU</th><th>Memory</th>`;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="executeAction('node', '${item.name}', 'cordon')" style="font-size:10px;padding:2px 6px;" title="Cordon">⛔</button>
+                        <button class="btn" onclick="executeAction('node', '${item.name}', 'uncordon')" style="font-size:10px;padding:2px 6px;" title="Uncordon">✅</button>
+                        <button class="btn btn-danger" onclick="executeAction('node', '${item.name}', 'drain')" style="font-size:10px;padding:2px 6px;" title="Drain">💧</button>
+                    `;
+                    break;
+                case 'k8s-pods':
+                    data = k8s.pods || [];
+                    title = 'Pods';
+                    extraColumns = `<th>Node</th><th>Restarts</th>`;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">▶</button>
+                        <button class="btn btn-danger" onclick="executeAction('pod', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
+                        <button class="btn" onclick="showPodLogs('${item.namespace}', '${item.name}')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
+                    `;
+                    break;
+                case 'k8s-deployments':
+                    data = k8s.deployments || [];
+                    title = 'Deployments';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn btn-primary" onclick="scaleDeployment('${item.name}')" style="font-size:10px;padding:2px 6px;" title="Scale">📈</button>
+                        <button class="btn btn-danger" onclick="executeAction('deployment', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
+                    `;
+                    break;
+                case 'k8s-services':
+                    data = k8s.services || [];
+                    title = 'Services';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="showNotification('Service', 'Details for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Details">ℹ</button>
+                    `;
+                    break;
+                case 'k8s-jobs':
+                    data = (k8s.jobs || []).concat(k8s.cronjobs || []);
+                    title = 'Jobs';
+                    extraColumns = ``;
+                    rowActions = (item) => `
+                        <button class="btn" onclick="showNotification('Job', 'Logs for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
+                    `;
+                    break;
+                default:
+                    data = [];
+                    title = 'Unknown';
             }
             
             document.getElementById('content-area').innerHTML = `
@@ -1118,6 +1197,7 @@
                                     <th>Name</th>
                                     <th>Namespace</th>
                                     <th>Status</th>
+                                    ${extraColumns}
                                     <th>Age</th>
                                     <th>Actions</th>
                                 </tr>
@@ -1129,9 +1209,11 @@
                                         <td style="color:#64b5f6;">${item.name}</td>
                                         <td>${item.namespace || '-'}</td>
                                         <td><span class="badge ${getK8sStatusBadge(item.status || item.state)}">${item.status || item.state || '-'}</span></td>
+                                        ${type === 'k8s-nodes' ? `<td>${item.version || '-'}</td><td>${item.cpu || '-'}</td><td>${item.memory || '-'}</td>` : ''}
+                                        ${type === 'k8s-pods' ? `<td>${item.node || '-'}</td><td>${item.restarts || 0}</td>` : ''}
                                         <td>${item.age || '-'}</td>
                                         <td onclick="event.stopPropagation()">
-                                            <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;">▶</button>
+                                            ${rowActions(item)}
                                         </td>
                                     </tr>
                                 `).join('')}
@@ -1250,66 +1332,155 @@
             
             title.textContent = name;
             
-            if (type === 'vm' || type === 'k8s-nodes' && name) {
-                body.innerHTML = `
-                    <div style="margin-bottom:16px;">
-                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
-                        <span class="badge badge-success">Running</span>
-                    </div>
-                    <div class="cards-grid" style="grid-template-columns:1fr 1fr;">
-                        <div class="card"><div class="card-label">CPU</div><div style="font-size:18px;">23%</div></div>
-                        <div class="card"><div class="card-label">RAM</div><div style="font-size:18px;">54%</div></div>
-                        <div class="card"><div class="card-label">Disk</div><div style="font-size:18px;">31%</div></div>
-                        <div class="card"><div class="card-label">Network</div><div style="font-size:18px;">200Mbps</div></div>
-                    </div>
-                    
-                    <div class="tabs" style="margin-top:16px;">
-                        <button class="tab active">Overview</button>
-                        <button class="tab">Metrics</button>
-                        <button class="tab">Snapshots</button>
-                        <button class="tab">Processes</button>
-                        <button class="tab">Network</button>
-                        <button class="tab">Logs</button>
-                    </div>
-                `;
-                
+            if (type === 'vm') {
+                // Show loading state
+                body.innerHTML = `<div style="color:#6a7090;text-align:center;padding:40px;">Loading details for ${name}...</div>`;
                 actions.innerHTML = `
                     <button class="btn btn-primary" onclick="executeAction('vm', '${name}', 'restart')">▶ Restart</button>
                     <button class="btn btn-danger" onclick="executeAction('vm', '${name}', 'shutdown')">⏹ Shutdown</button>
                     <button class="btn" onclick="executeAction('vm', '${name}', 'snapshot')">💾 Snapshot</button>
-                    <button class="btn">🔧 Repair</button>
-                    <button class="btn">💻 SSH</button>
-                    <button class="btn">📋 Logs</button>
-                    <button class="btn">🖥 Console</button>
+                    <button class="btn btn-warning" onclick="executeAction('vm', '${name}', 'pause')">⏸ Pause</button>
+                    <button class="btn btn-success" onclick="executeAction('vm', '${name}', 'resume')">▶️ Resume</button>
                 `;
-            } else if (type === 'k8s-pods') {
+                
+                // Fetch VM details
+                state._pendingDrawer = { type: 'vm', name: name };
+                sendCommand('get_vm_details', { name: name });
+                
+            } else if (type === 'k8s-nodes') {
                 body.innerHTML = `
                     <div style="margin-bottom:16px;">
                         <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
-                        <span class="badge badge-success">Running</span>
+                        <span class="badge badge-success">Ready</span>
+                    </div>
+                    <div style="margin-bottom:8px;"><strong>Node:</strong> ${name}</div>
+                `;
+                actions.innerHTML = `
+                    <button class="btn" onclick="executeAction('node', '${name}', 'cordon')">⛔ Cordon</button>
+                    <button class="btn" onclick="executeAction('node', '${name}', 'uncordon')">✅ Uncordon</button>
+                    <button class="btn btn-danger" onclick="executeAction('node', '${name}', 'drain')">💧 Drain</button>
+                `;
+            } else if (type === 'k8s-pods') {
+                const pod = (state.kubernetes?.pods || []).find(p => p.name === name);
+                body.innerHTML = `
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                        <span class="badge ${getK8sStatusBadge(pod?.status)}">${pod?.status || 'Unknown'}</span>
                     </div>
                     <div style="margin-bottom:8px;"><strong>Name:</strong> ${name}</div>
-                    <div style="margin-bottom:8px;"><strong>Restarts:</strong> 0</div>
-                    <div style="margin-bottom:8px;"><strong>Age:</strong> 2h</div>
+                    <div style="margin-bottom:8px;"><strong>Namespace:</strong> ${pod?.namespace || '-'}</div>
+                    <div style="margin-bottom:8px;"><strong>Node:</strong> ${pod?.node || '-'}</div>
+                    <div style="margin-bottom:8px;"><strong>Restarts:</strong> ${pod?.restarts || 0}</div>
+                    <div style="margin-bottom:8px;"><strong>Age:</strong> ${pod?.age || '-'}</div>
                 `;
-                
                 actions.innerHTML = `
                     <button class="btn btn-primary" onclick="executeAction('pod', '${name}', 'restart')">▶ Restart</button>
-                    <button class="btn btn-danger">🗑 Delete</button>
-                    <button class="btn">📋 Logs</button>
-                    <button class="btn">📝 Describe</button>
-                    <button class="btn">💻 Exec</button>
-                    <button class="btn">🔗 Port Forward</button>
+                    <button class="btn btn-danger" onclick="executeAction('pod', '${name}', 'delete')">🗑 Delete</button>
+                    <button class="btn" onclick="showPodLogs('${pod?.namespace || 'default'}', '${name}')">📋 Logs</button>
                 `;
+            } else if (type === 'k8s-deployments') {
+                body.innerHTML = `
+                    <div style="margin-bottom:8px;"><strong>Deployment:</strong> ${name}</div>
+                `;
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="scaleDeployment('${name}')">📈 Scale</button>
+                    <button class="btn btn-danger" onclick="executeAction('deployment', '${name}', 'delete')">🗑 Delete</button>
+                `;
+            } else {
+                body.innerHTML = `<div>Details for ${type}: ${name}</div>`;
+                actions.innerHTML = '';
             }
             
             drawer.classList.add('open');
             overlay.classList.add('open');
         }
         
+        function renderVMDrawerDetails(details) {
+            const body = document.getElementById('drawer-body');
+            if (!body) return;
+            
+            const podsOnNode = (state.kubernetes?.pods || []).filter(p => p.node === details.name);
+            
+            body.innerHTML = `
+                <div style="margin-bottom:16px;">
+                    <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                    <span class="badge ${details.state === 'running' ? 'badge-success' : details.state === 'paused' ? 'badge-warning' : 'badge-error'}">${details.state}</span>
+                </div>
+                <div class="cards-grid" style="grid-template-columns:1fr 1fr;">
+                    <div class="card">
+                        <div class="card-label">vCPUs</div>
+                        <div style="font-size:18px;">${details.vcpus || 'N/A'}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Memory</div>
+                        <div style="font-size:18px;">${details.memory?.used || 'N/A'}</div>
+                        <div class="card-detail">Max: ${details.memory?.max || 'N/A'}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Disks</div>
+                        <div style="font-size:18px;">${details.disks?.length || 0}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Interfaces</div>
+                        <div style="font-size:18px;">${details.interfaces?.length || 0}</div>
+                    </div>
+                </div>
+                
+                ${podsOnNode.length > 0 ? `
+                    <div style="margin-top:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:8px;">📦 PODS ON THIS NODE (${podsOnNode.length})</div>
+                        ${podsOnNode.map(p => `
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                                <span style="color:#64b5f6;cursor:pointer;" onclick="openDrawer('k8s-pods', '${p.name}')">${p.name}</span>
+                                <span class="badge ${getK8sStatusBadge(p.status)}">${p.status}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                
+                ${details.snapshots?.length > 0 ? `
+                    <div style="margin-top:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:8px;">💾 SNAPSHOTS</div>
+                        ${details.snapshots.map(s => `
+                            <div style="font-size:12px;padding:4px 0;color:var(--text-secondary);">${s}</div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            `;
+        }
+        
         function closeDrawer() {
             document.getElementById('drawer').classList.remove('open');
             document.getElementById('drawer-overlay').classList.remove('open');
+            state._pendingDrawer = null;
+        }
+        
+        // ============================================================
+        // NEW FUNCTIONS FOR SCALING, PAUSE/RESUME, NODE ACTIONS
+        // ============================================================
+        function scaleDeployment(name) {
+            const replicas = prompt(`Enter new replica count for deployment "${name}":`, "3");
+            if (replicas === null) return;
+            const num = parseInt(replicas);
+            if (isNaN(num) || num < 0) {
+                alert("Please enter a valid number");
+                return;
+            }
+            sendCommand('execute_action', {
+                resource_type: 'deployment',
+                resource_name: name,
+                action: 'scale',
+                replicas: num
+            });
+            showNotification('Scale', `Scaling ${name} to ${num} replicas`, 'info');
+        }
+        
+        function showPodLogs(namespace, name) {
+            // This would need a real terminal/log viewer implementation
+            // For now, just show a notification
+            showNotification('Logs', `Viewing logs for ${namespace}/${name}`, 'info');
+            // In a real implementation, you'd open a new panel or fetch logs
+            alert(`Logs for ${namespace}/${name}\n\n(Log viewer would appear here - implement with kubectl logs)`);
         }
         
         // ============================================================
@@ -1335,18 +1506,25 @@
         }
         
         function createSnapshot() {
-            sendCommand('execute_action', { resource_type: 'vm', resource_name: '', action: 'snapshot' });
+            const vmName = prompt('Enter VM name for snapshot:');
+            if (vmName) {
+                sendCommand('execute_action', { resource_type: 'vm', resource_name: vmName, action: 'snapshot' });
+            }
         }
         
         function executeAction(type, name, action) {
+            if (!name || name === '') {
+                showNotification('Error', 'Resource name is required', 'error');
+                return;
+            }
             sendCommand('execute_action', { resource_type: type, resource_name: name, action: action });
-            showNotification('Action', `${action} ${type} ${name}...`, 'info');
+            showNotification('Action', `${action} on ${type} ${name} started`, 'info');
         }
         
         function emergencyMode() {
             if (confirm('⚠ EMERGENCY MODE - This will restart failed pods, repair networking, and flush caches. Continue?')) {
                 runRepair('all');
-                sendCommand('execute_action', { resource_type: 'pod', resource_name: 'all', action: 'restart' });
+                showNotification('Emergency', 'Emergency mode activated', 'warning');
             }
         }
         
@@ -1380,6 +1558,16 @@
             document.getElementById('search-results').classList.remove('show');
             document.getElementById('global-search').value = '';
             // Navigate based on path
+            if (path.startsWith('vm/')) {
+                selectResource('vms');
+            } else if (path.startsWith('kubernetes/')) {
+                const parts = path.split('/');
+                if (parts.length >= 3) {
+                    selectResource('k8s-' + parts[1]);
+                }
+            } else if (path === 'host') {
+                selectResource('host');
+            }
         }
         
         // ============================================================
@@ -1409,7 +1597,7 @@
             document.getElementById('vm-count-sidebar').textContent = vms.length;
             document.getElementById('node-count-sidebar').textContent = (k8s.nodes || []).length;
             document.getElementById('pod-count-sidebar').textContent = (k8s.pods || []).length;
-            document.getElementById('problem-count-sidebar').textContent = state.alerts.length;
+            document.getElementById('problem-count-sidebar').textContent = state.alerts.filter(a => !a.acknowledged).length;
         }
         
         function updateAlertBell() {
@@ -1430,31 +1618,45 @@
                     <div style="font-weight:bold;">${a.severity.toUpperCase()}</div>
                     <div style="font-size:11px;">${a.message}</div>
                     <div style="font-size:10px;color:#6a7090;">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                    ${!a.acknowledged ? `<button class="btn" onclick="acknowledgeAlert('${a.id}')" style="font-size:10px;padding:2px 6px;margin-top:4px;">✓ Acknowledge</button>` : '<span style="font-size:10px;color:var(--success);">✓ Acknowledged</span>'}
                 </div>
             `).join('') || '<div class="alert-item" style="color:#6a7090;">No alerts</div>';
             dropdown.classList.toggle('show');
         }
         
+        function acknowledgeAlert(alertId) {
+            sendCommand('acknowledge_alert', { alert_id: alertId });
+            toggleAlerts();
+        }
+        
         function showNotification(title, message, type) {
-            // Simple notification - could be enhanced with toast
             console.log(`[${type}] ${title}: ${message}`);
+            // Toast notification would go here
         }
         
         function getK8sStatusBadge(status) {
             const s = (status || '').toLowerCase();
             if (s.includes('running') || s.includes('ready') || s.includes('bound')) return 'badge-success';
             if (s.includes('pending') || s.includes('waiting')) return 'badge-warning';
-            if (s.includes('fail') || s.includes('error') || s.includes('crash')) return 'badge-error';
+            if (s.includes('fail') || s.includes('error') || s.includes('crash') || s.includes('notready')) return 'badge-error';
             return 'badge-info';
         }
         
         function toggleSelectAll(checkbox, prefix) {
-            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = document.querySelectorAll(`input[type="checkbox"]`);
             checkboxes.forEach(cb => {
                 if (cb !== checkbox) {
                     cb.checked = checkbox.checked;
                 }
             });
+            // Update selected items
+            document.querySelectorAll(`input[type="checkbox"]:checked`).forEach(cb => {
+                const name = cb.closest('tr')?.querySelector('td:nth-child(2)')?.textContent?.trim();
+                if (name) {
+                    state.selectedItems.add(prefix + ':' + name);
+                }
+            });
+            updateMultiselectBar();
         }
         
         function toggleSelectItem(id) {
@@ -1485,25 +1687,34 @@
         
         function bulkRestart() {
             state.selectedItems.forEach(id => {
-                const [type, name] = id.split(':');
+                const parts = id.split(':');
+                const type = parts[0];
+                const name = parts.slice(1).join(':');
                 executeAction(type, name, 'restart');
             });
-            clearSelection();
+            setTimeout(() => clearSelection(), 1000);
         }
         
         function bulkDelete() {
             if (confirm(`Delete ${state.selectedItems.size} items?`)) {
                 state.selectedItems.forEach(id => {
-                    const [type, name] = id.split(':');
+                    const parts = id.split(':');
+                    const type = parts[0];
+                    const name = parts.slice(1).join(':');
                     executeAction(type, name, 'delete');
                 });
-                clearSelection();
+                setTimeout(() => clearSelection(), 1000);
             }
         }
         
         function toggleTerminal() {
             const terminal = document.getElementById('terminal');
             terminal.style.display = terminal.style.display === 'none' ? 'block' : 'none';
+            if (terminal.style.display === 'block') {
+                document.getElementById('terminal-output').innerHTML += `
+                    <div class="terminal-line"><span class="terminal-prompt">$ </span>Terminal ready</div>
+                `;
+            }
         }
         
         function showAuditLog() {
