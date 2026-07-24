@@ -218,6 +218,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
+    # IMPORTANT: Global declarations MUST be at the top of the function
+    global MAX_WORKERS
+    global executor
+    
     parser = argparse.ArgumentParser(description="Network Recovery Tool - Web Server")
     parser.add_argument("--port", type=int, default=int(os.environ.get("NRT_PORT", "9876")))
     parser.add_argument("--host", type=str, default=os.environ.get("NRT_HOST", "0.0.0.0"))
@@ -225,25 +229,23 @@ def main():
                         help="Thread pool size (default: 2, ideal for 1-2GB RAM)")
     args = parser.parse_args()
 
-    global MAX_WORKERS
     MAX_WORKERS = args.workers
 
     # Recreate executor with configured worker count
-    global executor
     executor.shutdown(wait=False)
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     server = http.server.HTTPServer((args.host, args.port), APIHandler)
 
-    logger.info("Network Recovery Web UI: http://%s:%s", args.host, args.port)
-    logger.info("Workers: %d | Cmd timeout: %ds | Dashboard timeout: %ds",
+    logger.info("🌐 Network Recovery Web UI: http://%s:%s", args.host, args.port)
+    logger.info("⚙️  Workers: %d | Cmd timeout: %ds | Dashboard timeout: %ds",
                 MAX_WORKERS, CMD_TIMEOUT, DASHBOARD_TIMEOUT)
-    logger.info("Press Ctrl+C to stop")
+    logger.info("📋 Press Ctrl+C to stop")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("👋 Shutting down...")
         executor.shutdown(wait=True, timeout=5)
         server.shutdown()
 
