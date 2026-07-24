@@ -1234,91 +1234,91 @@
         
         // Request sparkline data
         sendCommand('get_metrics_history', { period: '1h' });
-    }
-       function renderHostView() {
-        const m = state.metrics;
-        document.getElementById('content-area').innerHTML = `
-            <div class="panel">
-                <div class="panel-header">🖥️ Host Details</div>
-                <div class="panel-body">
-                    <div class="cards-grid">
-                        <div class="card" style="grid-column: span 2;">
-                            <div class="card-label">Hostname</div>
-                            <div class="card-value" style="font-size:22px;color:var(--accent);">${m?.name || window.location.hostname}</div>
-                            <div class="card-detail">${m?.os || 'Linux'} • ${m?.cpu_count || 'N/A'} Cores</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">CPU</div>
-                            <div style="display:flex;flex-direction:column;gap:6px;">
-                                <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span style="font-size:24px;font-weight:700;color:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.cpu || 0}%</span>
-                                    <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? '🔴 High' : (m?.cpu || 0) > 60 ? '🟡 Elevated' : '🟢 Normal'}</span>
-                                </div>
-                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
-                                    <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
-                                </div>
-                                <div style="display:flex;justify-content:space-between;font-size:10px;color:#6a7090;">
-                                    <span>Load: ${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span>
-                                    <span>${m?.load_avg_5m ? m.load_avg_5m.toFixed(2) : '0.00'}</span>
-                                    <span>${m?.load_avg_15m ? m.load_avg_15m.toFixed(2) : '0.00'}</span>
+     }
+        function renderHostView() {
+            const m = state.metrics;
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">🖥️ Host Details</div>
+                    <div class="panel-body">
+                        <div class="cards-grid">
+                            <div class="card" style="grid-column: span 2;">
+                                <div class="card-label">Hostname</div>
+                                <div class="card-value" style="font-size:22px;color:var(--accent);">${m?.name || window.location.hostname}</div>
+                                <div class="card-detail">${m?.os || 'Linux'} • ${m?.cpu_count || 'N/A'} Cores</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">CPU</div>
+                                <div style="display:flex;flex-direction:column;gap:6px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:24px;font-weight:700;color:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.cpu || 0}%</span>
+                                        <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? '🔴 High' : (m?.cpu || 0) > 60 ? '🟡 Elevated' : '🟢 Normal'}</span>
+                                    </div>
+                                    <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                        <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                    </div>
+                                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#6a7090;">
+                                        <span>Load: ${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span>
+                                        <span>${m?.load_avg_5m ? m.load_avg_5m.toFixed(2) : '0.00'}</span>
+                                        <span>${m?.load_avg_15m ? m.load_avg_15m.toFixed(2) : '0.00'}</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">RAM</div>
-                            <div style="display:flex;flex-direction:column;gap:6px;">
-                                <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span style="font-size:24px;font-weight:700;color:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.ram || 0}%</span>
-                                    <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
-                                </div>
-                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
-                                    <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Disk</div>
-                            <div style="display:flex;flex-direction:column;gap:6px;">
-                                <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span style="font-size:24px;font-weight:700;color:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.disk || 0}%</span>
-                                    <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
-                                </div>
-                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
-                                    <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                            <div class="card">
+                                <div class="card-label">RAM</div>
+                                <div style="display:flex;flex-direction:column;gap:6px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:24px;font-weight:700;color:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.ram || 0}%</span>
+                                        <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                                    </div>
+                                    <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                        <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Network</div>
-                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.network_speed_mbps || 0} <span style="font-size:14px;color:#6a7090;font-weight:400;">Mbps</span></div>
-                            <div class="card-detail">${m?.network_rx_mbps || 0} RX / ${m?.network_tx_mbps || 0} TX</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Processes</div>
-                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.processes || 0}</div>
-                            <div class="card-detail">Running</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Uptime</div>
-                            <div style="font-size:20px;font-weight:700;color:var(--success);">${m?.uptime || 'N/A'}</div>
-                            <div class="card-detail">Since ${new Date(Date.now() - ((m?.uptime_seconds || 0) * 1000)).toLocaleDateString()}</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Swap</div>
-                            <div style="display:flex;flex-direction:column;gap:6px;">
-                                <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span style="font-size:24px;font-weight:700;color:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};">${m?.swap || 0}%</span>
+                            <div class="card">
+                                <div class="card-label">Disk</div>
+                                <div style="display:flex;flex-direction:column;gap:6px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:24px;font-weight:700;color:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.disk || 0}%</span>
+                                        <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
+                                    </div>
+                                    <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                        <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                    </div>
                                 </div>
-                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
-                                    <div style="height:100%;width:${m?.swap || 0}%;background:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Network</div>
+                                <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.network_speed_mbps || 0} <span style="font-size:14px;color:#6a7090;font-weight:400;">Mbps</span></div>
+                                <div class="card-detail">${m?.network_rx_mbps || 0} RX / ${m?.network_tx_mbps || 0} TX</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Processes</div>
+                                <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.processes || 0}</div>
+                                <div class="card-detail">Running</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Uptime</div>
+                                <div style="font-size:20px;font-weight:700;color:var(--success);">${m?.uptime || 'N/A'}</div>
+                                <div class="card-detail">Since ${new Date(Date.now() - ((m?.uptime_seconds || 0) * 1000)).toLocaleDateString()}</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-label">Swap</div>
+                                <div style="display:flex;flex-direction:column;gap:6px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                                        <span style="font-size:24px;font-weight:700;color:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};">${m?.swap || 0}%</span>
+                                    </div>
+                                    <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                        <div style="height:100%;width:${m?.swap || 0}%;background:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        `;
-    }
+            `;
+        }
         
         function renderVMList() {
             const vms = state.vms || [];
@@ -1338,6 +1338,10 @@
                                     <th>IP</th>
                                     <th>CPU</th>
                                     <th>RAM</th>
+                                    <th>RAM %</th>
+                                    <th>Disk</th>
+                                    <th>Disk %</th>
+                                    <th>Swap</th>
                                     <th>Pods</th>
                                     <th>Actions</th>
                                 </tr>
@@ -1347,6 +1351,8 @@
                                     const podCount = pods.filter(p => p.node === vm.name).length;
                                     const isPaused = vm.state === 'paused';
                                     const isRunning = vm.state === 'running';
+                                    const ramPercent = vm.ram_percent || 0;
+                                    const diskPercent = vm.disk_percent || 0;
                                     return `
                                     <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
                                         <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
@@ -1355,6 +1361,24 @@
                                         <td>${vm.ip || 'unknown'}</td>
                                         <td>${vm.cpu || 'N/A'}</td>
                                         <td>${vm.ram || 'N/A'}</td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:4px;">
+                                                <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;min-width:40px;">
+                                                    <div style="height:100%;width:${ramPercent}%;background:${ramPercent > 80 ? '#dc2626' : ramPercent > 60 ? '#f59e0b' : '#16a34a'};border-radius:3px;"></div>
+                                                </div>
+                                                <span style="font-size:10px;color:#6a7090;min-width:30px;">${ramPercent}%</span>
+                                            </div>
+                                        </td>
+                                        <td>${vm.disk || 'N/A'}</td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:4px;">
+                                                <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;min-width:40px;">
+                                                    <div style="height:100%;width:${diskPercent}%;background:${diskPercent > 80 ? '#dc2626' : diskPercent > 60 ? '#f59e0b' : '#16a34a'};border-radius:3px;"></div>
+                                                </div>
+                                                <span style="font-size:10px;color:#6a7090;min-width:30px;">${diskPercent}%</span>
+                                            </div>
+                                        </td>
+                                        <td>${vm.swap || 'N/A'}</td>
                                         <td>${podCount}</td>
                                         <td onclick="event.stopPropagation()">
                                             <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">▶</button>
@@ -1371,6 +1395,7 @@
                 </div>
             `;
         }
+       
         
         function renderK8sView(type) {
             const k8s = state.kubernetes || {};
@@ -1845,68 +1870,112 @@
             showNotification('Refresh', '✅ Data refreshed', 'success');
         }
 
-        function runDiagnostics() {
-            showNotification('Diagnostics', '🔍 Running network diagnostics...', 'info');
-            
-            // Check if we're in the network view or show a modal
-            if (state.currentView === 'network') {
-                // Use the network view's output
-                const output = document.getElementById('network-output');
-                if (output) {
-                    output.innerHTML = '<div style="color:#40c4ff;">🔍 Running diagnostics...</div>';
-                }
-                sendCommand('run_diagnostics');
-                return;
-            }
-            
-            // Otherwise run in background and show results in a panel
-            const content = document.getElementById('content-area');
-            const diagPanel = document.createElement('div');
-            diagPanel.className = 'panel';
-            diagPanel.style.marginTop = '12px';
-            diagPanel.innerHTML = `
-                <div class="panel-header">🔍 Diagnostic Results</div>
-                <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e27;border-radius:4px;padding:12px;">
-                    <div style="color:#40c4ff;">⏳ Running diagnostics...</div>
-                </div>
-            `;
-            content.prepend(diagPanel);
-            
-            sendCommand('run_diagnostics');
+       function runDiagnostics() {
+        // Show what we're diagnosing
+        const target = prompt(
+            '🔍 What would you like to diagnose?\n\n' +
+            'Options:\n' +
+            '  1. Network (default) - Diagnose all network layers\n' +
+            '  2. VM - Diagnose a specific VM\n' +
+            '  3. Kubernetes - Diagnose cluster health\n' +
+            '  4. All - Full system diagnostic\n\n' +
+            'Enter number or leave blank for network:',
+            '1'
+        );
+        
+        if (target === null) return; // User cancelled
+        
+        let diagnosticType = 'network';
+        let targetName = '';
+        
+        switch(target.trim()) {
+            case '2':
+                const vmName = prompt('Enter VM name to diagnose:');
+                if (!vmName) return;
+                diagnosticType = 'vm';
+                targetName = vmName;
+                break;
+            case '3':
+                diagnosticType = 'kubernetes';
+                break;
+            case '4':
+                diagnosticType = 'all';
+                break;
+            default:
+                diagnosticType = 'network';
+                break;
         }
+        
+        showNotification('Diagnostics', `🔍 Running ${diagnosticType} diagnostics...`, 'info');
+        
+        if (state.currentView === 'network') {
+            const output = document.getElementById('network-output');
+            if (output) {
+                output.innerHTML = `<div style="color:#40c4ff;">🔍 Running ${diagnosticType} diagnostics${targetName ? ' on ' + targetName : ''}...</div>`;
+            }
+            sendCommand('run_diagnostics', { type: diagnosticType, target: targetName });
+            return;
+        }
+        
+        const content = document.getElementById('content-area');
+        const diagPanel = document.createElement('div');
+        diagPanel.className = 'panel';
+        diagPanel.style.marginTop = '12px';
+        diagPanel.innerHTML = `
+            <div class="panel-header">🔍 ${diagnosticType.charAt(0).toUpperCase() + diagnosticType.slice(1)} Diagnostic Results${targetName ? ' - ' + targetName : ''}</div>
+            <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:var(--bg-surface);border-radius:4px;padding:12px;">
+                <div style="color:#2563eb;">⏳ Running diagnostics...</div>
+            </div>
+        `;
+        content.prepend(diagPanel);
+        
+        sendCommand('run_diagnostics', { type: diagnosticType, target: targetName });
+    }
 
         function runRepair(target) {
-            if (!confirm('⚠️ This will attempt to repair network issues. Continue?')) {
-                return;
-            }
-            
-            showNotification('Repair', '🔧 Starting repair...', 'info');
-            
-            // Check if we're in the network view
-            if (state.currentView === 'network') {
-                const output = document.getElementById('network-output');
-                if (output) {
-                    output.innerHTML = '<div style="color:#ffc107;">🔧 Running repair...</div>';
-                }
-                sendCommand('run_repair', { target: target || '' });
-                return;
-            }
-            
-            // Otherwise show in a panel
-            const content = document.getElementById('content-area');
-            const repairPanel = document.createElement('div');
-            repairPanel.className = 'panel';
-            repairPanel.style.marginTop = '12px';
-            repairPanel.innerHTML = `
-                <div class="panel-header">🔧 Repair Results</div>
-                <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:#0a0e27;border-radius:4px;padding:12px;">
-                    <div style="color:#ffc107;">⏳ Running repair...</div>
-                </div>
-            `;
-            content.prepend(repairPanel);
-            
-            sendCommand('run_repair', { target: target || '' });
+        // Show what will be repaired
+        const confirmMsg = 
+            '⚠️ REPAIR WARNING\n\n' +
+            'This will attempt to repair:\n' +
+            '  • DNS resolution (flush cache, restart resolver)\n' +
+            '  • Network interfaces (reconnect if down)\n' +
+            '  • Routing (flush ARP cache, restart NetworkManager)\n' +
+            '  • DHCP lease (renew if DHCP)\n' +
+            '  • Bridge interfaces (re-enslave if needed)\n\n' +
+            'Active connections may be briefly disrupted.\n' +
+            'VMs may lose network connectivity momentarily.\n\n' +
+            'Continue with repair?';
+        
+        if (!confirm(confirmMsg)) {
+            showNotification('Repair', '❌ Repair cancelled', 'warning');
+            return;
         }
+        
+        showNotification('Repair', '🔧 Starting repair...', 'info');
+        
+        if (state.currentView === 'network') {
+            const output = document.getElementById('network-output');
+            if (output) {
+                output.innerHTML = '<div style="color:#ff9800;">🔧 Running repair...</div>';
+            }
+            sendCommand('run_repair', { target: target || '' });
+            return;
+        }
+        
+        const content = document.getElementById('content-area');
+        const repairPanel = document.createElement('div');
+        repairPanel.className = 'panel';
+        repairPanel.style.marginTop = '12px';
+        repairPanel.innerHTML = `
+            <div class="panel-header">🔧 Repair Results</div>
+            <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:var(--bg-surface);border-radius:4px;padding:12px;">
+                <div style="color:#ff9800;">⏳ Running repair...</div>
+            </div>
+        `;
+        content.prepend(repairPanel);
+        
+        sendCommand('run_repair', { target: target || '' });
+    }
 
         function createSnapshot() {
             const vmName = prompt('Enter VM name for snapshot (or leave empty for all):');
@@ -2230,88 +2299,176 @@
             }
         }
         
-        // ============================================================
-        // TERMINAL - Fully Working Browser Terminal
-        // ============================================================
+    // ============================================================
+    // TERMINAL - Fully Working with History & Better UX
+    // ============================================================
 
-        function toggleTerminal() {
-            const container = document.getElementById('terminal-container');
-            if (container.style.display === 'none') {
-                container.style.display = 'block';
-                document.getElementById('terminal-input').focus();
-                // Update status bar
-                document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]').style.color = 'var(--accent)';
-            } else {
-                container.style.display = 'none';
-                document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]').style.color = '';
-            }
-        }
+    let terminalHistory = [];
+    let terminalHistoryIndex = -1;
 
-        function clearTerminal() {
-            const output = document.getElementById('terminal-output');
+    function clearTerminal() {
+        const output = document.getElementById('terminal-output');
+        if (output) {
             output.innerHTML = `
-                <div class="terminal-output info">Terminal cleared</div>
-                <div class="terminal-output" style="color:#6a7090;">─────────────────────────────────────────────</div>
+                <div class="terminal-output info">╔═══════════════════════════════════════════════════╗</div>
+                <div class="terminal-output info">║  Terminal cleared                                 ║</div>
+                <div class="terminal-output info">╚═══════════════════════════════════════════════════╝</div>
+                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">─────────────────────────────────────────────</div>
             `;
         }
+        terminalHistory = [];
+        terminalHistoryIndex = -1;
+    }
 
-        // Terminal command execution
-        document.addEventListener('DOMContentLoaded', function() {
-            const terminalInput = document.getElementById('terminal-input');
-            if (terminalInput) {
-                terminalInput.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter') {
-                        const command = this.value.trim();
-                        if (command) {
-                            executeTerminalCommand(command);
-                            this.value = '';
-                        }
+    // Terminal command execution with history
+    document.addEventListener('DOMContentLoaded', function() {
+        const terminalInput = document.getElementById('terminal-input');
+        const terminalContainer = document.getElementById('terminal-container');
+        
+        if (terminalInput) {
+            // Enter key to execute
+            terminalInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    const command = this.value.trim();
+                    if (command) {
+                        // Add to history
+                        terminalHistory.push(command);
+                        terminalHistoryIndex = terminalHistory.length;
+                        executeTerminalCommand(command);
+                        this.value = '';
                     }
-                });
-            }
-        });
-
-        function executeTerminalCommand(command) {
-            const output = document.getElementById('terminal-output');
-            
-            // Add command to output
-            output.innerHTML += `
-                <div style="display:flex;gap:8px;margin-top:4px;">
-                    <span style="color:#64b5f6;">$</span>
-                    <span style="color:#e0e0e0;">${escapeHtml(command)}</span>
-                </div>
-            `;
-            
-            // Execute command via API
-            fetch('/api/terminal', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: command })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    output.innerHTML += `<div class="terminal-output error">Error: ${escapeHtml(data.error)}</div>`;
-                } else if (data.output) {
-                    const lines = data.output.split('\n');
-                    lines.forEach(line => {
-                        let color = '#8890b0';
-                        if (line.includes('error') || line.includes('fail')) color = '#f44336';
-                        else if (line.includes('warning') || line.includes('warn')) color = '#ff9800';
-                        else if (line.includes('success') || line.includes('ok')) color = '#4caf50';
-                        else if (line.includes('●') || line.includes('running')) color = '#64b5f6';
-                        output.innerHTML += `<div class="terminal-output" style="color:${color};">${escapeHtml(line)}</div>`;
-                    });
                 }
-                // Scroll to bottom
-                const container = document.getElementById('terminal-container');
-                container.scrollTop = container.scrollHeight;
-                output.scrollTop = output.scrollHeight;
-            })
-            .catch(error => {
-                output.innerHTML += `<div class="terminal-output error">Error: ${escapeHtml(error.message)}</div>`;
+                // Up arrow for history (previous command)
+                else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (terminalHistoryIndex > 0) {
+                        terminalHistoryIndex--;
+                        this.value = terminalHistory[terminalHistoryIndex] || '';
+                    }
+                }
+                // Down arrow for history (next command)
+                else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (terminalHistoryIndex < terminalHistory.length - 1) {
+                        terminalHistoryIndex++;
+                        this.value = terminalHistory[terminalHistoryIndex] || '';
+                    } else {
+                        terminalHistoryIndex = terminalHistory.length;
+                        this.value = '';
+                    }
+                }
             });
         }
+        
+        // Click on terminal container focuses input
+        if (terminalContainer) {
+            terminalContainer.addEventListener('click', function(e) {
+                // Don't steal focus if clicking on output text (for selection)
+                if (e.target.tagName !== 'INPUT') {
+                    terminalInput?.focus();
+                }
+            });
+        }
+    });
+
+    function executeTerminalCommand(command) {
+        const output = document.getElementById('terminal-output');
+        if (!output) return;
+        
+        // Add command to output with timestamp
+        const timestamp = new Date().toLocaleTimeString();
+        output.innerHTML += `
+            <div style="display:flex;gap:8px;margin-top:4px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                <span style="color:#58a6ff;font-weight:600;">$</span>
+                <span style="color:#e6edf3;">${escapeHtml(command)}</span>
+                <span style="color:#6a7090;font-size:10px;margin-left:auto;">${timestamp}</span>
+            </div>
+        `;
+        
+        // Show spinner while executing
+        const spinnerId = 'spinner-' + Date.now();
+        output.innerHTML += `<div id="${spinnerId}" class="terminal-output info">⏳ Executing...</div>`;
+        output.scrollTop = output.scrollHeight;
+        
+        // Execute command via API
+        fetch('/api/terminal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Remove spinner
+            const spinner = document.getElementById(spinnerId);
+            if (spinner) spinner.remove();
+            
+            if (data.error) {
+                output.innerHTML += `<div class="terminal-output error">❌ Error: ${escapeHtml(data.error)}</div>`;
+            } else if (data.output) {
+                const lines = data.output.split('\n');
+                // Only show first 50 lines to prevent flooding
+                const displayLines = lines.slice(0, 50);
+                if (lines.length > 50) {
+                    displayLines.push(`... and ${lines.length - 50} more lines (truncated)`);
+                }
+                displayLines.forEach(line => {
+                    let color = '#8b949e';
+                    let prefix = '';
+                    if (line.toLowerCase().includes('error') || line.toLowerCase().includes('fail')) {
+                        color = '#f85149';
+                        prefix = '❌ ';
+                    } else if (line.toLowerCase().includes('warning') || line.toLowerCase().includes('warn')) {
+                        color = '#d29922';
+                        prefix = '⚠️ ';
+                    } else if (line.toLowerCase().includes('success') || line.toLowerCase().includes('ok') || line.toLowerCase().includes('connected')) {
+                        color = '#3fb950';
+                        prefix = '✅ ';
+                    } else if (line.includes('●') || line.includes('running') || line.includes('up')) {
+                        color = '#58a6ff';
+                    }
+                    if (line.trim()) {
+                        output.innerHTML += `<div class="terminal-output" style="color:${color};">${prefix}${escapeHtml(line)}</div>`;
+                    }
+                });
+                // Show exit code if non-zero
+                if (data.exit_code !== undefined && data.exit_code !== 0) {
+                    output.innerHTML += `<div class="terminal-output warning">⚠️ Exit code: ${data.exit_code}</div>`;
+                }
+            }
+            // Scroll to bottom
+            const container = document.getElementById('terminal-container');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+            output.scrollTop = output.scrollHeight;
+        })
+        .catch(error => {
+            // Remove spinner
+            const spinner = document.getElementById(spinnerId);
+            if (spinner) spinner.remove();
+            output.innerHTML += `<div class="terminal-output error">❌ Error: ${escapeHtml(error.message)}</div>`;
+        });
+    }
+
+    function toggleTerminal() {
+        const container = document.getElementById('terminal-container');
+        if (!container) return;
+        
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            const input = document.getElementById('terminal-input');
+            if (input) {
+                setTimeout(() => input.focus(), 100);
+            }
+            // Update button style
+            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
+            if (btn) btn.style.color = 'var(--primary)';
+        } else {
+            container.style.display = 'none';
+            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
+            if (btn) btn.style.color = '';
+        }
+    }
         
         function showAuditLog() {
             sendCommand('get_audit_log');

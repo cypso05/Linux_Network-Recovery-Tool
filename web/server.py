@@ -19,7 +19,7 @@ import psutil
 import re
 from collections import deque
 import hashlib
-import glob  # ← ADD THIS for file pattern matching
+import glob
 
 # Configuration
 HOST = '0.0.0.0'
@@ -217,33 +217,8 @@ class InfrastructureMonitor:
         # Start background tasks
         threading.Thread(target=self._collect_metrics_loop, daemon=True).start()
         threading.Thread(target=self._process_jobs_loop, daemon=True).start()
-        threading.Thread(target=self._auto_clean_loop, daemon=True).start()  # ← ADD THIS
+        threading.Thread(target=self._auto_clean_loop, daemon=True).start()
     
-    def _init_automations(self):
-        """Set up default automation rules"""
-        self.automation.add_automation(
-            "Pod CrashLoop Recovery",
-            {"type": "pod_status", "condition": "CrashLoopBackOff"},
-            [
-                {"name": "Restart pod", "type": "command", "command": "kubectl delete pod {target}"},
-                {"name": "Wait for restart", "type": "sleep", "duration": 30},
-                {"name": "Check status", "type": "verify", "command": "kubectl get pod {target} -o jsonpath='{.status.phase}' | grep Running"}
-            ]
-        )
-        
-        self.automation.add_automation(
-            "VM Recovery",
-            {"type": "vm_status", "condition": "unreachable"},
-            [
-                {"name": "Ping test", "type": "command", "command": "ping -c 3 {target}"},
-                {"name": "SSH test", "type": "command", "command": "ssh -o ConnectTimeout=5 {target} echo ok"},
-                {"name": "Restart networking", "type": "command", "command": "ssh {target} 'systemctl restart networking'", "on_failure": "continue"},
-                {"name": "Wait", "type": "sleep", "duration": 10},
-                {"name": "Reboot VM", "type": "command", "command": "virsh reboot {target}", "on_failure": "continue"}
-            ]
-        )
-
-
     def _init_automations(self):
         """Set up default automation rules"""
         self.automation.add_automation(
@@ -318,7 +293,7 @@ class InfrastructureMonitor:
                 metrics = self.get_system_metrics()
                 self.metrics_history.append(metrics)
                 self.last_update = time.time()
-                time.sleep(5)  # 5 second interval = 12 samples/minute
+                time.sleep(5)
             except Exception as e:
                 print(f"Metrics collection error: {e}")
                 time.sleep(5)
@@ -352,7 +327,7 @@ class InfrastructureMonitor:
             'disk_total_gb': round(disk.total / (1024**3), 1),
             'network_rx_bytes': net.bytes_recv,
             'network_tx_bytes': net.bytes_sent,
-            'network_rx_mbps': 0,  # Calculated over time
+            'network_rx_mbps': 0,
             'network_tx_mbps': 0,
             'load_avg_1m': psutil.getloadavg()[0],
             'load_avg_5m': psutil.getloadavg()[1],
@@ -375,7 +350,6 @@ class InfrastructureMonitor:
         history = [m for m in self.metrics_history 
                    if datetime.fromisoformat(m['timestamp']) > cutoff]
         
-        # Sample to ~60 data points
         step = max(1, len(history) // 60)
         sampled = history[::step]
         
@@ -410,7 +384,7 @@ class InfrastructureMonitor:
         time.sleep(0.5)
         net2 = psutil.net_io_counters()
         bytes_total = (net2.bytes_recv + net2.bytes_sent) - (net1.bytes_recv + net1.bytes_sent)
-        return round(bytes_total * 8 / 500_000, 1)  # Mbps over 0.5s
+        return round(bytes_total * 8 / 500_000, 1)
     
     def _get_uptime(self):
         """Get system uptime in human readable format"""
@@ -421,31 +395,25 @@ class InfrastructureMonitor:
         minutes = int((uptime_seconds % 3600) // 60)
         return f"{days}d {hours}h {minutes}m"
     
-
-        
-    # ---- VM Management (Universal Detection with Aggressive Caching) ----
-
+    # ---- VM Management (Universal Detection with Caching) ----
+    
     def get_vms_list(self, force_refresh=False):
         """
-        Universal VM detection with aggressive caching.
-        Designed for low-resource devices (1GB RAM).
-        Cache TTL: 60 seconds to minimize subprocess calls.
+        Get VMs with proper CPU, RAM, Disk, and Swap usage.
+        Filters out debug/thread VMs.
         """
         
-        # Cache for 60 seconds (longer = less CPU usage)
-        cache_ttl = 60  # seconds
+        cache_ttl = 30  # seconds
         
-        # Check if we have a valid cache
         if hasattr(self, '_vms_cache') and not force_refresh:
             cache_age = time.time() - getattr(self, '_vms_cache_time', 0)
             if cache_age < cache_ttl:
-                return self._vms_cache  # Silent return - no logging spam
+                return self._vms_cache
         
         vms = []
         seen_names = set()
         
-        # Define known VMs
-        known_vm_names = ['k8s-node-01', 'k8s-node-02', 'k8s-node-03']
+        # Define known VMs with their correct IPs
         known_vm_ips = {
             'k8s-node-01': '10.0.0.21',
             'k8s-node-02': '10.0.0.22',
@@ -453,11 +421,11 @@ class InfrastructureMonitor:
         }
         
         # ------------------------------------------------------------------
-        # METHOD 1: libvirt / KVM / QEMU (virsh) - Quick check only
+        # Get VMs from virsh
         # ------------------------------------------------------------------
         try:
             result = subprocess.run(['virsh', 'list', '--all'], 
-                                capture_output=True, text=True, timeout=3)
+                                  capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')[2:]
                 for line in lines:
@@ -466,149 +434,80 @@ class InfrastructureMonitor:
                         if len(parts) >= 3:
                             vm_name = parts[1]
                             vm_state = parts[2]
+                            
+                            # Skip debug threads
+                            if 'debug-threads' in vm_name or 'guest+' in vm_name:
+                                continue
+                            if vm_name.startswith('guest-'):
+                                continue
+                            
                             if vm_name not in seen_names:
                                 seen_names.add(vm_name)
-                                vms.append({
-                                    'name': vm_name,
-                                    'state': vm_state,
-                                    'ip': 'unknown',
-                                    'hypervisor': 'libvirt',
-                                    'id': parts[0] if parts[0] != '-' else None,
-                                    'cpu': '0%',
-                                    'ram': '0%',
-                                    'disk': '0%'
-                                })
-        except Exception:
-            pass  # Silently skip errors
+                                
+                                # Get IP, CPU, RAM, Disk, Swap
+                                ip = self._get_vm_ip(vm_name)
+                                cpu = self._get_vm_cpu(vm_name)
+                                ram = self._get_vm_ram(vm_name)
+                                disk = self._get_vm_disk(vm_name)
+                                swap = self._get_vm_swap(vm_name)
+                                ram_percent = self._get_vm_ram_percent(vm_name)
+                                disk_percent = self._get_vm_disk_percent(vm_name)
+                                
+                                # Only add if it has a real IP
+                                if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+                                    vms.append({
+                                        'name': vm_name,
+                                        'state': vm_state,
+                                        'ip': ip,
+                                        'hypervisor': 'libvirt',
+                                        'id': parts[0] if parts[0] != '-' else None,
+                                        'cpu': cpu,
+                                        'ram': ram,
+                                        'disk': disk,
+                                        'swap': swap,
+                                        'ram_percent': ram_percent,
+                                        'disk_percent': disk_percent
+                                    })
+        except Exception as e:
+            print(f"virsh error: {e}")
         
         # ------------------------------------------------------------------
-        # METHOD 2: QEMU Processes (only if no VMs found)
-        # ------------------------------------------------------------------
-        if len(vms) == 0:
-            try:
-                result = subprocess.run(
-                    "ps aux 2>/dev/null | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' | head -5",
-                    shell=True, capture_output=True, text=True, timeout=2
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    for name in result.stdout.strip().split('\n'):
-                        name = name.strip().rstrip(',')
-                        if name in known_vm_names:
-                            continue
-                        if name and name not in seen_names:
-                            seen_names.add(name)
-                            vms.append({
-                                'name': name,
-                                'state': 'running',
-                                'ip': 'unknown',
-                                'hypervisor': 'qemu',
-                                'id': None,
-                                'cpu': '0%',
-                                'ram': '0%',
-                                'disk': '0%'
-                            })
-            except Exception:
-                pass
-        
-        # ------------------------------------------------------------------
-        # METHOD 3: Docker Containers (only if no VMs found)
-        # ------------------------------------------------------------------
-        if len(vms) == 0:
-            try:
-                result = subprocess.run(
-                    "docker ps -a --format '{{.Names}}' 2>/dev/null | head -10",
-                    shell=True, capture_output=True, text=True, timeout=2
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    for name in result.stdout.strip().split('\n'):
-                        name = name.strip()
-                        if name in known_vm_names:
-                            continue
-                        if any(kw in name.lower() for kw in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master']):
-                            if name not in seen_names:
-                                seen_names.add(name)
-                                vms.append({
-                                    'name': name,
-                                    'state': 'running',
-                                    'ip': 'container',
-                                    'hypervisor': 'docker',
-                                    'id': None,
-                                    'cpu': '0%',
-                                    'ram': '0%',
-                                    'disk': '0%'
-                                })
-            except Exception:
-                pass
-        
-        # ------------------------------------------------------------------
-        # METHOD 4: LXC / LXD Containers (only if no VMs found)
-        # ------------------------------------------------------------------
-        if len(vms) == 0:
-            try:
-                result = subprocess.run(
-                    "lxc list --format csv -c n 2>/dev/null | head -10",
-                    shell=True, capture_output=True, text=True, timeout=2
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    for name in result.stdout.strip().split('\n'):
-                        name = name.strip()
-                        if name in known_vm_names:
-                            continue
-                        if name and name not in seen_names:
-                            seen_names.add(name)
-                            vms.append({
-                                'name': name,
-                                'state': 'running',
-                                'ip': 'lxc',
-                                'hypervisor': 'lxc',
-                                'id': None,
-                                'cpu': '0%',
-                                'ram': '0%',
-                                'disk': '0%'
-                            })
-            except Exception:
-                pass
-        
-        # ------------------------------------------------------------------
-        # METHOD 5: Known VMs (ALWAYS included)
+        # Ensure known VMs are present with correct data
         # ------------------------------------------------------------------
         for ip, name in known_vm_ips.items():
-            if name not in seen_names:
-                seen_names.add(name)
-                # Quick ping with 1 second timeout
-                reachable = False
-                try:
-                    result = subprocess.run(
-                        f"ping -c 1 -W 1 {ip} >/dev/null 2>&1",
-                        shell=True, timeout=1
-                    )
-                    reachable = result.returncode == 0
-                except:
-                    pass
-                
+            existing = next((v for v in vms if v['name'] == name), None)
+            if existing:
+                # Update existing with correct IP and state
+                existing['ip'] = ip
+                existing['state'] = 'running'
+                # Get fresh CPU/RAM/Disk/Swap
+                existing['cpu'] = self._get_vm_cpu(name)
+                existing['ram'] = self._get_vm_ram(name)
+                existing['disk'] = self._get_vm_disk(name)
+                existing['swap'] = self._get_vm_swap(name)
+                existing['ram_percent'] = self._get_vm_ram_percent(name)
+                existing['disk_percent'] = self._get_vm_disk_percent(name)
+            else:
+                # Add known VM
                 vms.append({
                     'name': name,
-                    'state': 'running' if reachable else 'offline',
+                    'state': 'running',
                     'ip': ip,
                     'hypervisor': 'known',
                     'id': None,
-                    'cpu': '0%',
-                    'ram': '0%',
-                    'disk': '0%'
+                    'cpu': self._get_vm_cpu(name),
+                    'ram': self._get_vm_ram(name),
+                    'disk': self._get_vm_disk(name),
+                    'swap': self._get_vm_swap(name),
+                    'ram_percent': self._get_vm_ram_percent(name),
+                    'disk_percent': self._get_vm_disk_percent(name)
                 })
         
         # Cache the results
         self._vms_cache = vms
         self._vms_cache_time = time.time()
         
-        # Single log line with method count (not every time)
-        if not hasattr(self, '_vms_log_count'):
-            self._vms_log_count = 0
-        
-        self._vms_log_count += 1
-        if self._vms_log_count % 5 == 1:  # Log every 5th cache refresh
-            print(f"VM detection: {len(vms)} VMs cached ({cache_ttl}s TTL)")
-        
+        print(f"VM detection: {len(vms)} VMs cached")
         return vms
     
     def _get_vm_ip(self, vm_name):
@@ -709,6 +608,92 @@ class InfrastructureMonitor:
         except:
             pass
         return '0GiB'
+    
+    def _get_vm_swap(self, vm_name):
+        """Get VM swap usage via virsh or SSH"""
+        try:
+            # Try via virsh first
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --balloon 2>/dev/null | grep 'balloon.swap' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                swap_kb = int(result.stdout.strip())
+                if swap_kb > 0:
+                    return f"{swap_kb/1024:.1f}Mi"
+            return '0Mi'
+        except:
+            pass
+        
+        # Try via SSH if VM has IP
+        ip = self._get_vm_ip(vm_name)
+        if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+            try:
+                result = subprocess.run(
+                    f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} 'free -m | grep Swap | awk \\'{{print $3 \\\"/\\\" $2 \\\" MB\\\"}}\\'' 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except:
+                pass
+        return '0Mi'
+    
+    def _get_vm_ram_percent(self, vm_name):
+        """Get VM RAM usage percentage"""
+        try:
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --balloon 2>/dev/null | grep -E 'balloon.current|balloon.maximum' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                values = result.stdout.strip().split('\n')
+                if len(values) >= 2:
+                    current = int(values[0])
+                    maximum = int(values[1])
+                    if maximum > 0:
+                        return int((current / maximum) * 100)
+            return 0
+        except:
+            pass
+        
+        # Try via virsh dominfo
+        try:
+            result = subprocess.run(
+                f"virsh dominfo {vm_name} 2>/dev/null | grep -E 'Used memory|Max memory' | awk '{{print $3}}'",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                values = result.stdout.strip().split('\n')
+                if len(values) >= 2:
+                    used = int(values[0])
+                    max_mem = int(values[1])
+                    if max_mem > 0:
+                        return int((used / max_mem) * 100)
+            return 0
+        except:
+            pass
+        return 0
+    
+    def _get_vm_disk_percent(self, vm_name):
+        """Get VM disk usage percentage"""
+        try:
+            # Try to get disk usage via SSH
+            ip = self._get_vm_ip(vm_name)
+            if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+                try:
+                    result = subprocess.run(
+                        f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} 'df -h / | tail -1 | awk \\'{{print $5}}\\' | tr -d \\'%\\'' 2>/dev/null",
+                        shell=True, capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        return int(result.stdout.strip())
+                except:
+                    pass
+            return 0
+        except:
+            pass
+        return 0
     
     def get_vm_details(self, vm_name):
         """Get comprehensive VM details"""
