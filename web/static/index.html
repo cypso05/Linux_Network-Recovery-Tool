@@ -32,6 +32,9 @@
             <button class="btn btn-info" onclick="runAction('snapshot')">
                 <span class="icon">💾</span> Snapshot
             </button>
+            <button class="btn btn-dashboard" onclick="switchTab('dashboard')">
+                <span class="icon">📈</span> Dashboard
+            </button>
             <button class="btn btn-danger" onclick="clearOutput()">
                 <span class="icon">🗑️</span> Clear
             </button>
@@ -51,8 +54,17 @@
             <span class="layer" data-layer="11">Kubernetes</span>
         </div>
 
+        <!-- Main Output Area -->
         <div class="output" id="output">
             <div class="placeholder">Click an action to begin</div>
+        </div>
+
+        <!-- Dashboard Tab Content -->
+        <div id="dashboard">
+            <h2>📈 System Dashboard</h2>
+            <div id="dashboard-content">
+                <div class="placeholder">Loading dashboard...</div>
+            </div>
         </div>
 
         <div class="progress-container" id="progressContainer" style="display:none">
@@ -69,5 +81,169 @@
     </div>
 
     <script src="app.js"></script>
+    <script>
+    //===========================================================================
+    // Dashboard Functions
+    //===========================================================================
+
+    function switchTab(tab) {
+        const output = document.getElementById('output');
+        const dashboard = document.getElementById('dashboard');
+        const layers = document.getElementById('layers');
+        const progress = document.getElementById('progressContainer');
+
+        if (tab === 'dashboard') {
+            output.style.display = 'none';
+            layers.style.display = 'none';
+            progress.style.display = 'none';
+            dashboard.style.display = 'block';
+            loadDashboard();
+        } else {
+            dashboard.style.display = 'none';
+            output.style.display = 'block';
+            layers.style.display = 'flex';
+            progress.style.display = 'none';
+        }
+    }
+
+    async function loadDashboard() {
+        const content = document.getElementById('dashboard-content');
+        content.innerHTML = '<div class="placeholder">Loading dashboard...</div>';
+
+        try {
+            const response = await fetch('/api/dashboard');
+            if (!response.ok) throw new Error('API unavailable');
+            const data = await response.json();
+
+            if (data.error) {
+                content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
+                    escapeHtml(data.error) + '</div>';
+                return;
+            }
+
+            renderDashboard(data);
+        } catch(e) {
+            content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
+                'Dashboard unavailable. Ensure network-recover-dashboard is installed.</div>';
+        }
+    }
+
+    function renderDashboard(data) {
+        if (!data || !data.host) {
+            document.getElementById('dashboard-content').innerHTML = 
+                '<div class="placeholder">No data received.</div>';
+            return;
+        }
+
+        const memPct = data.host.memory.percent || 0;
+        const diskPct = data.host.disk.percent || 0;
+
+        let html = '';
+
+        // Host Section
+        html += '<div class="dashboard-section">';
+        html += '<h3>🖥️ Host: ' + escapeHtml(data.host.name) + '</h3>';
+
+        html += '<div class="resource-row">';
+        html += '<span class="resource-label">Memory</span>';
+        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + memPct + '%"></div></div>';
+        html += '<span class="resource-value">' + 
+            escapeHtml(data.host.memory.used) + ' / ' + 
+            escapeHtml(data.host.memory.total) + 
+            ' (' + memPct + '%)</span>';
+        html += '</div>';
+
+        html += '<div class="resource-row">';
+        html += '<span class="resource-label">Swap</span>';
+        html += '<span class="resource-value">' + 
+            escapeHtml(data.host.swap.used) + ' / ' + 
+            escapeHtml(data.host.swap.total) + '</span>';
+        html += '</div>';
+
+        html += '<div class="resource-row">';
+        html += '<span class="resource-label">Disk</span>';
+        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + diskPct + '%"></div></div>';
+        html += '<span class="resource-value">' + 
+            escapeHtml(data.host.disk.info) + '</span>';
+        html += '</div>';
+
+        html += '<div class="resource-row">';
+        html += '<span class="resource-label">Load</span>';
+        html += '<span class="resource-value">' + 
+            escapeHtml(data.host.load) + '</span>';
+        html += '</div>';
+        html += '</div>';
+
+        // VM Sections
+        if (data.vms && data.vms.length > 0) {
+            data.vms.forEach(vm => {
+                const vmMemPct = extractPercent(vm.memory);
+                html += '<div class="dashboard-section vm-section">';
+                html += '<h3>🖥️ VM: ' + escapeHtml(vm.ip) + '</h3>';
+
+                html += '<div class="resource-row">';
+                html += '<span class="resource-label">Memory</span>';
+                html += '<div class="resource-bar"><div class="resource-fill" style="width:' + vmMemPct + '%"></div></div>';
+                html += '<span class="resource-value">' + 
+                    escapeHtml(vm.memory) + '</span>';
+                html += '</div>';
+
+                html += '<div class="resource-row">';
+                html += '<span class="resource-label">Disk</span>';
+                html += '<span class="resource-value">' + 
+                    escapeHtml(vm.disk) + '</span>';
+                html += '</div>';
+
+                html += '<div class="resource-row">';
+                html += '<span class="resource-label">Load</span>';
+                html += '<span class="resource-value">' + 
+                    escapeHtml(vm.load) + '</span>';
+                html += '</div>';
+                html += '</div>';
+            });
+        }
+
+        // K3s Section
+        if (data.k3s && data.k3s.status === 'available' && data.k3s.nodes) {
+            html += '<div class="dashboard-section k3s-section">';
+            html += '<h3>☸️ K3s Cluster</h3>';
+            html += '<table class="k3s-table">';
+            html += '<tr><th>Node</th><th>Status</th><th>Role</th><th>CPU</th><th>Memory</th></tr>';
+            data.k3s.nodes.forEach(node => {
+                const statusClass = node.status === 'Ready' ? 'status-ready' : 'status-not-ready';
+                html += '<tr>';
+                html += '<td>' + escapeHtml(node.name) + '</td>';
+                html += '<td class="' + statusClass + '">' + 
+                    escapeHtml(node.status) + '</td>';
+                html += '<td>' + escapeHtml(node.role) + '</td>';
+                html += '<td>' + escapeHtml(node.cpu || 'N/A') + '</td>';
+                html += '<td>' + escapeHtml(node.memory || 'N/A') + '</td>';
+                html += '</tr>';
+            });
+            html += '</table></div>';
+        }
+
+        document.getElementById('dashboard-content').innerHTML = html;
+    }
+
+    function extractPercent(str) {
+        if (!str) return 0;
+        const match = str.match(/(\d+)%/);
+        return match ? parseInt(match[1]) : 0;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // Load dashboard on page load if it was the last active tab
+    document.addEventListener('DOMContentLoaded', function() {
+        // Pre-fetch dashboard data so it's ready when user switches tabs
+        fetch('/api/dashboard').catch(() => {});
+    });
+    </script>
 </body>
 </html>

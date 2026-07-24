@@ -1,358 +1,256 @@
-#!/bin/bash
+﻿#!/bin/bash
 #===============================================================================
-# Linux Network Recovery Tool - Professional GUI v2.0.0
-# 6 dedicated displays with real-time progress tracking + Web UI launcher
+# Network Recovery Tool - Professional GUI v3.0.0
+# Persistent window with embedded progress, dashboard, and status
 #===============================================================================
 
-readonly APP_NAME="Linux Network Recovery Tool"
-readonly APP_VERSION="2.0.0"
-readonly APP_ICON="network-wireless"
-readonly MAIN_WIDTH=500
-readonly DETAIL_WIDTH=750
-readonly DETAIL_HEIGHT=550
+readonly APP_NAME="Network Recovery"
+readonly APP_VERSION="3.0.0"
+readonly APP_ICON="network-recover"
+readonly MAIN_WIDTH=680
+readonly MAIN_HEIGHT=520
+readonly DASHBOARD_CMD="/usr/local/bin/network-recover-dashboard"
 
 #===============================================================================
-# UTILITY: Run command with real-time progress
+# PROGRESS FEED (piped to zenity --progress)
 #===============================================================================
-run_with_progress() {
-    local title="$1"
-    local subtitle="$2"
-    local log_file="$3"
-    shift 3
-    local cmd=("$@")
+run_action() {
+    local action="$1"
+    local title="$2"
+    local log_file="/tmp/nrt-${action}-$(date +%Y%m%d-%H%M%S).log"
 
-    # Start command in background
-    "${cmd[@]}" > "$log_file" 2>&1 &
+    # Start the command in background
+    sudo network-recover "$action" > "$log_file" 2>&1 &
     local pid=$!
 
-    # Track progress from log output
+    # Stream progress markers from log file
     (
-        local progress=0
-        echo "0" ; echo "# $subtitle..."
-
+        local p=0
+        echo "0" ; echo "# Starting $title..."
         while kill -0 $pid 2>/dev/null; do
-            if [[ ! -f "$log_file" ]]; then
-                sleep 0.5
-                continue
+            if [[ -f "$log_file" ]]; then
+                [[ $p -lt 15 ]] && grep -q "LAYER 1:" "$log_file" 2>/dev/null && { p=15; echo "$p"; echo "# Physical layer..."; }
+                [[ $p -lt 30 ]] && grep -q "LAYER 3:" "$log_file" 2>/dev/null && { p=30; echo "$p"; echo "# IP layer..."; }
+                [[ $p -lt 50 ]] && grep -q "LAYER 5:" "$log_file" 2>/dev/null && { p=50; echo "$p"; echo "# Gateway..."; }
+                [[ $p -lt 70 ]] && grep -q "LAYER 7:" "$log_file" 2>/dev/null && { p=70; echo "$p"; echo "# DNS..."; }
+                [[ $p -lt 90 ]] && grep -q "REPAIR ENGINE" "$log_file" 2>/dev/null && { p=90; echo "$p"; echo "# Repairs..."; }
             fi
-
-            # Map log markers to progress percentages
-            [[ $progress -lt 10 ]] && grep -q "LAYER 1:" "$log_file" 2>/dev/null && { progress=10; echo "$progress"; echo "# Checking physical layer..."; }
-            [[ $progress -lt 20 ]] && grep -q "LAYER 2:" "$log_file" 2>/dev/null && { progress=20; echo "$progress"; echo "# Checking link layer..."; }
-            [[ $progress -lt 30 ]] && grep -q "LAYER 3:" "$log_file" 2>/dev/null && { progress=30; echo "$progress"; echo "# Checking IP layer..."; }
-            [[ $progress -lt 40 ]] && grep -q "LAYER 4:" "$log_file" 2>/dev/null && { progress=40; echo "$progress"; echo "# Checking routing..."; }
-            [[ $progress -lt 50 ]] && grep -q "LAYER 5:" "$log_file" 2>/dev/null && { progress=50; echo "$progress"; echo "# Checking gateway..."; }
-            [[ $progress -lt 60 ]] && grep -q "LAYER 6:" "$log_file" 2>/dev/null && { progress=60; echo "$progress"; echo "# Testing internet..."; }
-            [[ $progress -lt 70 ]] && grep -q "LAYER 7:" "$log_file" 2>/dev/null && { progress=70; echo "$progress"; echo "# Checking DNS..."; }
-            [[ $progress -lt 80 ]] && grep -q "LAYER 8:" "$log_file" 2>/dev/null && { progress=80; echo "$progress"; echo "# Testing HTTPS..."; }
-            [[ $progress -lt 90 ]] && grep -q "REPAIR ENGINE" "$log_file" 2>/dev/null && { progress=90; echo "$progress"; echo "# Running repairs..."; }
-            [[ $progress -lt 100 ]] && grep -q "POST-REPAIR" "$log_file" 2>/dev/null && { progress=95; echo "$progress"; echo "# Verifying..."; }
-
             sleep 0.3
         done
-
         wait $pid
-        echo "100" ; echo "# Complete!"
+        echo "100" ; echo "# Complete"
         sleep 0.5
     ) | zenity --progress \
-        --title="$title" \
-        --text="$subtitle..." \
-        --percentage=0 \
-        --auto-close \
-        --width=450 \
-        --no-cancel \
-        2>/dev/null
+        --title="$APP_NAME - $title" \
+        --text="Working..." \
+        --percentage=0 --auto-close --width=450 --no-cancel 2>/dev/null
 
-    return ${PIPESTATUS[0]}
+    echo "$log_file"
 }
 
 #===============================================================================
-# UTILITY: Show results in a scrollable window
+# DASHBOARD
 #===============================================================================
-show_results() {
-    local title="$1"
-    local log_file="$2"
-    local success="$3"
+show_dashboard() {
+    local tmp_html="/tmp/nrt-dashboard-$$.html"
 
-    if [[ "$success" == "true" ]]; then
-        zenity --info \
-            --title="$title" \
-            --text="✅ Operation completed successfully!\n\nFull details below:" \
-            --width=400 \
-            2>/dev/null
-    else
-        zenity --warning \
-            --title="$title" \
-            --text="⚠️  Some issues were detected.\n\nReview the details below:" \
-            --width=400 \
-            2>/dev/null
+    # Generate dashboard HTML with inline CSS
+    cat > "$tmp_html" << 'DASHHTML'
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; margin: 20px; }
+  h2 { color: #00d4ff; border-bottom: 1px solid #333; padding-bottom: 8px; }
+  h3 { color: #7ec8e3; margin-top: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; margin: 6px 0; }
+  .label { width: 70px; font-size: 0.9em; color: #aaa; }
+  .bar-bg { flex:1; height:14px; background:#2a2a3e; border-radius:7px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:7px; transition: width .5s; }
+  .bar-low { background: #4CAF50; }
+  .bar-mid { background: #FFC107; }
+  .bar-high { background: #f44336; }
+  .value { min-width: 130px; font-size: 0.85em; text-align: right; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { text-align: left; color: #888; font-size: 0.8em; padding: 4px 8px; border-bottom: 1px solid #333; }
+  td { padding: 4px 8px; font-size: 0.85em; border-bottom: 1px solid #222; }
+  .vm-card { background: #16213e; border-radius: 8px; padding: 12px; margin: 10px 0; }
+  .err { color: #f44336; text-align: center; padding: 40px; }
+</style>
+</head>
+<body>
+<h2>📊 System Dashboard</h2>
+<div id="content">Loading...</div>
+<script>
+async function load() {
+  try {
+    const r = await fetch('/api/dashboard');
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    render(d);
+  } catch(e) {
+    document.getElementById('content').innerHTML = '<div class="err">Dashboard unavailable.<br><small>Start the web server to see live data.</small></div>';
+    // Fallback: try CLI
+    try {
+      const r2 = await fetch('/api/status');
+      const s = await r2.json();
+      if (s.ok) {
+        document.getElementById('content').innerHTML = '<p>Web server is running. Ensure network-recover-dashboard is installed.</p><pre>' + s.output + '</pre>';
+      }
+    } catch(e2) {}
+  }
+}
+function render(d) {
+  let h = '';
+  const memClass = d.host.memory.percent > 80 ? 'bar-high' : (d.host.memory.percent > 60 ? 'bar-mid' : 'bar-low');
+  const diskClass = d.host.disk.percent > 80 ? 'bar-high' : (d.host.disk.percent > 60 ? 'bar-mid' : 'bar-low');
+  h += '<h3>🖥️ Host: ' + esc(d.host.name) + '</h3>';
+  h += row('Memory', d.host.memory.used+' / '+d.host.memory.total, d.host.memory.percent, memClass);
+  h += row('Disk', d.host.disk.info, d.host.disk.percent, diskClass);
+  h += '<div class="row"><span class="label">Load</span><span class="value" style="text-align:left">' + esc(d.host.load) + '</span></div>';
+  if (d.vms) {
+    d.vms.forEach(vm => {
+      const mp = (vm.memory.match(/(\d+)%/)||[0,0])[1];
+      const mc = mp > 80 ? 'bar-high' : (mp > 60 ? 'bar-mid' : 'bar-low');
+      h += '<div class="vm-card"><h3>🖥️ VM: ' + esc(vm.ip) + '</h3>';
+      h += row('Memory', vm.memory, mp, mc);
+      h += '<div class="row"><span class="label">Disk</span><span class="value" style="text-align:left">' + esc(vm.disk) + '</span></div>';
+      h += '<div class="row"><span class="label">Load</span><span class="value" style="text-align:left">' + esc(vm.load) + '</span></div>';
+      h += '</div>';
+    });
+  }
+  if (d.k3s && d.k3s.nodes) {
+    h += '<h3>☸️ K3s Cluster</h3><table><tr><th>Node</th><th>Status</th><th>Role</th><th>CPU</th><th>Memory</th></tr>';
+    d.k3s.nodes.forEach(n => {
+      h += '<tr><td>'+esc(n.name)+'</td><td>'+esc(n.status)+'</td><td>'+esc(n.role)+'</td><td>'+esc(n.cpu||'N/A')+'</td><td>'+esc(n.memory||'N/A')+'</td></tr>';
+    });
+    h += '</table>';
+  }
+  document.getElementById('content').innerHTML = h;
+}
+function row(label, val, pct, cls) {
+  return '<div class="row"><span class="label">'+label+'</span><div class="bar-bg"><div class="bar-fill '+cls+'" style="width:'+pct+'%"></div></div><span class="value">'+esc(val)+'</span></div>';
+}
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+load();
+</script>
+</body>
+</html>
+DASHHTML
+
+    # Try webview if available, fallback to zenity
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "$tmp_html" 2>/dev/null &
     fi
 
-    if [[ -f "$log_file" ]]; then
-        zenity --text-info \
-            --title="$title — Full Report" \
-            --width=$DETAIL_WIDTH \
-            --height=$DETAIL_HEIGHT \
-            --filename="$log_file" \
-            --checkbox="Save report to Desktop" \
-            2>/dev/null
-
-        if [[ $? -eq 0 ]]; then
-            local desktop_file="$HOME/Desktop/network-report-$(date +%Y%m%d-%H%M%S).txt"
-            cp "$log_file" "$desktop_file"
-            if command -v notify-send &>/dev/null; then
-                notify-send -u normal -t 5000 "$APP_NAME" "Report saved to Desktop" --icon=$APP_ICON 2>/dev/null
-            fi
-        fi
-    fi
-}
-
-#===============================================================================
-# DISPLAY 1: Web UI Launcher
-#===============================================================================
-show_web_ui() {
-    # Check if server is running
-    if ! pgrep -f "python3.*server.py" > /dev/null 2>&1; then
-        zenity --question \
-            --title="$APP_NAME — Web UI" \
-            --text="The web server is not running.\n\nStart it now?" \
-            --width=400 \
-            2>/dev/null || return
-
-        # Start the server
-        if systemctl is-active network-recover-web &>/dev/null; then
-            sudo systemctl start network-recover-web
-        else
-            sudo /usr/local/bin/network-recover-web &
-        fi
-        sleep 2
-    fi
-
-    # Get the IP
-    local ip=$(hostname -I | awk '{print $1}')
-    local url="http://${ip}:9876"
-
-    # Show info and open browser
-    zenity --info \
-        --title="$APP_NAME — Web UI" \
-        --text="🌐 Web UI is available at:\n\n$url\n\nOpening in your browser..." \
-        --width=450 \
-        2>/dev/null
-
-    xdg-open "$url" 2>/dev/null || sensible-browser "$url" 2>/dev/null || firefox "$url" 2>/dev/null
-}
-
-#===============================================================================
-# DISPLAY 2: Diagnose Network
-#===============================================================================
-show_diagnose() {
-    local log_file="/tmp/network-diagnose-$(date +%Y%m%d-%H%M%S).log"
-
-    run_with_progress "$APP_NAME — Diagnose" "Starting network diagnosis" "$log_file" \
-        sudo network-recover diagnose
-
-    local exit_code=$?
-    show_results "Network Diagnosis" "$log_file" "$([[ $exit_code -eq 0 ]] && echo "true" || echo "false")"
-}
-
-#===============================================================================
-# DISPLAY 3: Repair Network
-#===============================================================================
-show_repair() {
-    # Safety warning before repair
-    zenity --question \
-        --title="$APP_NAME — Repair" \
-        --text="⚠️  Network Repair will attempt to fix connectivity issues.\n\nThis may temporarily disrupt:\n• Active connections\n• Running VMs on bridges\n• Kubernetes cluster communication\n\nProceed with repair?" \
-        --width=450 \
-        --ok-label="Repair Now" \
-        --cancel-label="Cancel" \
-        2>/dev/null || return
-
-    local log_file="/tmp/network-repair-$(date +%Y%m%d-%H%M%S).log"
-
-    run_with_progress "$APP_NAME — Repair" "Repairing network" "$log_file" \
-        sudo network-recover repair
-
-    # Determine success by checking log for actual repair outcome
-    if grep -q "✅" "$log_file" 2>/dev/null && ! grep -q "❌" "$log_file" 2>/dev/null; then
-        local success="true"
-        if command -v notify-send &>/dev/null; then
-            notify-send -u normal -t 10000 "$APP_NAME" "✅ Network connectivity restored!" --icon=$APP_ICON 2>/dev/null
-        fi
-    else
-        local success="false"
-        if command -v notify-send &>/dev/null; then
-            notify-send -u critical -t 10000 "$APP_NAME" "⚠️ Some issues remain" --icon=dialog-error 2>/dev/null
-        fi
-    fi
-
-    show_results "Network Repair" "$log_file" "$success"
-}
-
-#===============================================================================
-# DISPLAY 4: Network Status
-#===============================================================================
-show_status() {
-    local output
-    output=$(sudo network-recover status 2>&1)
-
-    # Parse with safe defaults
-    local interface=$(echo "$output" | grep "Interface:" | awk '{print $2}' || echo "N/A")
-    local ip=$(echo "$output" | grep "IP:" | awk '{print $2}' || echo "N/A")
-    local gateway=$(echo "$output" | grep "Gateway:" | awk '{print $2}' || echo "N/A")
-    local bridge=$(echo "$output" | grep "Bridge:" | awk '{print $2}' || echo "None")
-    local internet=$(echo "$output" | grep "Internet:" | awk '{print $2}' || echo "Unknown")
-    local dns=$(echo "$output" | grep "DNS:" | awk '{print $2}' || echo "Unknown")
-    local nm=$(echo "$output" | grep "NM:" | awk '{print $2}' || echo "Unknown")
-    local vms=$(echo "$output" | grep "VMs:" | awk '{print $2}' || echo "N/A")
-
-    # Map status to icons
-    local internet_icon="❌"
-    local dns_icon="❌"
-    local nm_icon="❌"
-    [[ "$internet" == "✅" ]] && internet_icon="✅"
-    [[ "$dns" == "✅" ]] && dns_icon="✅"
-    [[ "$nm" == "✅" ]] && nm_icon="✅"
-
-    zenity --list \
-        --title="$APP_NAME — Status" \
-        --text="Network Health Overview" \
-        --width=550 \
-        --height=400 \
-        --column="Component" \
-        --column="Status" \
-        --column="Detail" \
-        "🌐 Interface" "" "$interface" \
-        "📡 IP Address" "" "$ip" \
-        "🚪 Gateway" "" "$gateway" \
-        "🔗 Bridge" "" "$bridge" \
-        "🌍 Internet" "$internet_icon Connected" "" \
-        "🔍 DNS" "$dns_icon Working" "" \
-        "⚙️  NetworkManager" "$nm_icon Running" "" \
-        "💻 Virtual Machines" "" "$vms running" \
-        2>/dev/null
-
-    # Offer detailed view
-    zenity --question \
-        --title="$APP_NAME — Status" \
-        --text="View full status report?" \
-        --width=350 \
-        2>/dev/null && echo "$output" | zenity --text-info \
-            --title="$APP_NAME — Detailed Status" \
-            --width=$DETAIL_WIDTH \
-            --height=$DETAIL_HEIGHT \
-            2>/dev/null
-}
-
-#===============================================================================
-# DISPLAY 5: Save Snapshot
-#===============================================================================
-show_snapshot() {
-    local log_file="/tmp/network-snapshot-$(date +%Y%m%d-%H%M%S).log"
-
-    (
-        echo "25" ; echo "# Capturing network state..."
-        sudo network-recover snapshot > "$log_file" 2>&1
-        echo "75" ; echo "# Snapshot saved..."
-        sleep 0.5
-        echo "100" ; echo "# Done!"
-    ) | zenity --progress \
-        --title="$APP_NAME — Snapshot" \
-        --text="Saving network snapshot..." \
-        --percentage=0 \
-        --auto-close \
-        --width=400 \
-        --no-cancel \
-        2>/dev/null
-
-    local snapshot_path=$(grep -oP '/var/lib/network-recover/snapshots/[^ ]+' "$log_file" 2>/dev/null || echo "unknown")
-
-    zenity --info \
-        --title="$APP_NAME — Snapshot Saved" \
-        --text="✅ Network snapshot saved successfully!\n\n📍 Location: $snapshot_path\n\nUse this snapshot to compare network state before and after changes." \
-        --width=500 \
+    # Primary: use zenity text-info for CLI dashboard fallback
+    local cli_output
+    cli_output=$($DASHBOARD_CMD 2>/dev/null || echo "Dashboard unavailable. Install network-recover-dashboard.")
+    
+    zenity --text-info \
+        --title="$APP_NAME - Dashboard" \
+        --width=700 --height=550 \
+        --font="Monospace 10" \
+        --filename=<(echo "$cli_output") \
         2>/dev/null
 }
 
 #===============================================================================
-# DISPLAY 6: Monitor Network
-#===============================================================================
-show_watch() {
-    # Detect available terminal
-    local terminal=""
-    for term in xfce4-terminal gnome-terminal konsole xterm; do
-        if command -v $term &>/dev/null; then
-            terminal=$term
-            break
-        fi
-    done
-
-    if [[ -z "$terminal" ]]; then
-        zenity --error \
-            --title="$APP_NAME — Error" \
-            --text="No terminal emulator found.\n\nPlease install one:\nsudo apt install xfce4-terminal" \
-            --width=400 \
-            2>/dev/null
-        return
-    fi
-
-    zenity --info \
-        --title="$APP_NAME — Monitor" \
-        --text="📡 Starting real-time network monitor\n\nDisplays: Internet • DNS • Gateway • Interface\n\nPress Ctrl+C in the terminal window to stop monitoring." \
-        --width=450 \
-        --ok-label="Start Monitor" \
-        2>/dev/null
-
-    $terminal -T "Network Monitor — $APP_NAME" -e "sudo network-recover watch" &
-}
-
-#===============================================================================
-# MAIN MENU
+# MAIN MENU (always visible, never disappears)
 #===============================================================================
 show_main_menu() {
-    zenity --list \
-        --title="$APP_NAME v$APP_VERSION" \
-        --text="Select an action:" \
-        --width=550 \
-        --height=420 \
-        --column="Action" \
-        --column="Description" \
-        --column="Impact" \
-        "🌐  Web UI" "Open web interface in browser" "🟢 Safe" \
-        "🔍  Diagnose" "Full 11-layer diagnostic — no changes" "🟢 Safe" \
-        "🔧  Repair" "Diagnose + intelligent repair" "🟡 May disrupt" \
-        "📊  Status" "Quick network health overview" "🟢 Safe" \
-        "💾  Snapshot" "Save current network state" "🟢 Safe" \
-        "📡  Monitor" "Real-time network monitoring" "🟢 Safe" \
-        2>/dev/null
+    while true; do
+        local choice
+        choice=$(zenity --list \
+            --title="$APP_NAME v$APP_VERSION" \
+            --text="Select an action:" \
+            --width=500 --height=400 \
+            --column="Action" --column="Description" --column="Impact" \
+            "📊 Status" "Quick network health overview" "🟢 Safe" \
+            "🔍 Diagnose" "Full diagnostic - no changes" "🟢 Safe" \
+            "🔧 Repair" "Diagnose and repair issues" "🟡 May disrupt" \
+            "📈 Dashboard" "Host and VM resource monitor" "🟢 Safe" \
+            "💾 Snapshot" "Save current network state" "🟢 Safe" \
+            "📡 Monitor" "Real-time terminal monitor" "🟢 Safe" \
+            "🚪 Quit" "Close this application" "" \
+            2>/dev/null)
+
+        [[ -z "$choice" ]] && exit 0
+
+        case "$choice" in
+            *Status*)
+                local status_log
+                status_log=$(run_action "status" "Network Status")
+                zenity --text-info \
+                    --title="$APP_NAME - Status" \
+                    --width=700 --height=500 \
+                    --filename="$status_log" \
+                    2>/dev/null
+                ;;
+            *Diagnose*)
+                local diag_log
+                diag_log=$(run_action "diagnose" "Network Diagnosis")
+                zenity --text-info \
+                    --title="$APP_NAME - Diagnosis Report" \
+                    --width=750 --height=550 \
+                    --filename="$diag_log" \
+                    2>/dev/null
+                ;;
+            *Repair*)
+                zenity --question \
+                    --title="$APP_NAME - Repair" \
+                    --text="This will attempt to repair network issues.\n\nActive connections and VMs may be briefly disrupted.\n\nContinue?" \
+                    --width=450 --ok-label="Repair Now" --cancel-label="Cancel" \
+                    2>/dev/null || continue
+
+                local repair_log
+                repair_log=$(run_action "repair" "Network Repair")
+                zenity --text-info \
+                    --title="$APP_NAME - Repair Report" \
+                    --width=750 --height=550 \
+                    --filename="$repair_log" \
+                    2>/dev/null
+                ;;
+            *Dashboard*)
+                show_dashboard
+                ;;
+            *Snapshot*)
+                local snap_log
+                snap_log=$(run_action "snapshot" "Saving Snapshot")
+                zenity --info \
+                    --title="$APP_NAME - Snapshot" \
+                    --text="✅ Snapshot saved successfully.\n\nLocation: /var/lib/network-recover/snapshots/" \
+                    --width=400 \
+                    2>/dev/null
+                ;;
+            *Monitor*)
+                local term
+                for t in xfce4-terminal gnome-terminal konsole xterm; do
+                    command -v "$t" &>/dev/null && { term="$t"; break; }
+                done
+                if [[ -n "$term" ]]; then
+                    "$term" -T "Network Monitor" -e "sudo network-recover watch" &
+                else
+                    zenity --error --text="No terminal emulator found." --width=300 2>/dev/null
+                fi
+                ;;
+            *Quit*|"")
+                exit 0
+                ;;
+        esac
+    done
 }
 
 #===============================================================================
 # ENTRY POINT
 #===============================================================================
-
-# Handle direct command-line arguments (for .desktop file integration)
 if [[ -n "${1:-}" ]]; then
     case "$1" in
-        web|ui)          show_web_ui; exit $? ;;
-        diagnose|diag)   show_diagnose; exit $? ;;
-        repair|fix)      show_repair; exit $? ;;
-        status|stat)     show_status; exit $? ;;
-        snapshot|snap)   show_snapshot; exit $? ;;
-        watch|monitor)   show_watch; exit $? ;;
-        *)               show_main_menu; exit 0 ;;
+        status)     run_action "status" "Status" > /dev/null; exit ;;
+        diagnose)   run_action "diagnose" "Diagnose" > /dev/null; exit ;;
+        repair)     run_action "repair" "Repair" > /dev/null; exit ;;
+        dashboard)  show_dashboard; exit ;;
     esac
 fi
 
-# Interactive mode — show main menu
-choice=$(show_main_menu)
-[[ -z "$choice" ]] && exit 0
-
-case "$choice" in
-    *Web*)       show_web_ui ;;
-    *Diagnose*)  show_diagnose ;;
-    *Repair*)    show_repair ;;
-    *Status*)    show_status ;;
-    *Snapshot*)  show_snapshot ;;
-    *Monitor*)   show_watch ;;
-esac
+show_main_menu

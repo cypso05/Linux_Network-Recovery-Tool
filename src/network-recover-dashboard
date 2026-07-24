@@ -1,0 +1,252 @@
+#!/bin/bash
+#===============================================================================
+# Network Recovery Tool - System Dashboard
+# Displays host and VM resource usage (disk, memory, load, K3s status)
+# Output modes: text, json, html
+#===============================================================================
+
+set -euo pipefail
+
+# Configuration - VM IPs to query
+readonly VM_IPS=("10.0.0.21" "10.0.0.22" "10.0.0.23")
+readonly VM_USER="${VM_USER:-devcyp}"
+readonly SSH_TIMEOUT="${SSH_TIMEOUT:-3}"
+
+# Output mode: text, json, or html
+OUTPUT_MODE="${1:-text}"
+
+#===============================================================================
+# HOST RESOURCES
+#===============================================================================
+get_host_info() {
+    local mem_total=$(free -h | grep Mem | awk '{print $2}')
+    local mem_used=$(free -h | grep Mem | awk '{print $3}')
+    local mem_avail=$(free -h | grep Mem | awk '{print $7}')
+    local mem_percent=$(free | grep Mem | awk '{printf "%.0f", $3/$2*100}')
+    local swap_total=$(free -h | grep Swap | awk '{print $2}')
+    local swap_used=$(free -h | grep Swap | awk '{print $3}')
+    local disk_info=$(df -h / | tail -1 | awk '{print $3 "/" $2 " (" $5 ")"}')
+    local disk_percent=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
+    local load=$(uptime | awk -F'load average:' '{print $2}' | sed 's/^ *//')
+    local hostname=$(hostname)
+
+    case "$OUTPUT_MODE" in
+        json)
+            cat <<EOF
+  "host": {
+    "name": "$hostname",
+    "memory": { "total": "$mem_total", "used": "$mem_used", "available": "$mem_avail", "percent": $mem_percent },
+    "swap": { "total": "$swap_total", "used": "$swap_used" },
+    "disk": { "info": "$disk_info", "percent": $disk_percent },
+    "load": "$load"
+  }
+EOF
+            ;;
+        html)
+            cat <<EOF
+<div class='dashboard-section host-section'>
+<h3>🖥️ Host: $hostname</h3>
+<div class='resource-row'>
+  <span class='resource-label'>Memory</span>
+  <div class='resource-bar'><div class='resource-fill' style='width:${mem_percent}%'></div></div>
+  <span class='resource-value'>${mem_used}/${mem_total} (${mem_percent}%)</span>
+</div>
+<div class='resource-row'>
+  <span class='resource-label'>Swap</span>
+  <span class='resource-value'>${swap_used}/${swap_total}</span>
+</div>
+<div class='resource-row'>
+  <span class='resource-label'>Disk</span>
+  <div class='resource-bar'><div class='resource-fill' style='width:${disk_percent}%'></div></div>
+  <span class='resource-value'>${disk_info}</span>
+</div>
+<div class='resource-row'>
+  <span class='resource-label'>Load</span>
+  <span class='resource-value'>${load}</span>
+</div>
+</div>
+EOF
+            ;;
+        *)
+            cat <<EOF
+=== HOST ($hostname) ===
+Memory: ${mem_used}/${mem_total} (${mem_percent}%)
+Swap:   ${swap_used}/${swap_total}
+Disk:   ${disk_info}
+Load:   ${load}
+EOF
+            ;;
+    esac
+}
+
+#===============================================================================
+# VM RESOURCES
+#===============================================================================
+get_vm_info() {
+    case "$OUTPUT_MODE" in
+        json) echo "  \"vms\": [" ;;
+    esac
+
+    local vm_count=0
+    local first_vm=true
+
+    for ip in "${VM_IPS[@]}"; do
+        vm_count=$((vm_count + 1))
+        local vm_output
+        vm_output=$(ssh -o ConnectTimeout="$SSH_TIMEOUT" -o BatchMode=yes "$VM_USER@$ip" "
+            echo \"MEM:\$(free -h | grep Mem | awk '{print \$3 \"/\" \$2 \" (\" int(\$3/\$2*100) \"%)\"'})\"
+            echo \"DISK:\$(df -h / | tail -1 | awk '{print \$3 \"/\" \$2 \" (\" \$5 \")\"}')\"
+            echo \"LOAD:\$(uptime | awk -F'load average:' '{print \$2}' | sed 's/^ *//')\"
+        " 2>/dev/null || echo "MEM:N/A DISK:N/A LOAD:N/A")
+
+        local vm_mem=$(echo "$vm_output" | grep "^MEM:" | cut -d: -f2-)
+        local vm_disk=$(echo "$vm_output" | grep "^DISK:" | cut -d: -f2-)
+        local vm_load=$(echo "$vm_output" | grep "^LOAD:" | cut -d: -f2-)
+
+        case "$OUTPUT_MODE" in
+            json)
+                [[ "$first_vm" == true ]] && first_vm=false || echo ","
+                cat <<EOF
+    {
+      "ip": "$ip",
+      "memory": "$vm_mem",
+      "disk": "$vm_disk",
+      "load": "$vm_load"
+    }
+EOF
+                ;;
+            html)
+                cat <<EOF
+<div class='dashboard-section vm-section'>
+<h3>🖥️ VM: $ip</h3>
+<div class='resource-row'>
+  <span class='resource-label'>Memory</span>
+  <span class='resource-value'>$vm_mem</span>
+</div>
+<div class='resource-row'>
+  <span class='resource-label'>Disk</span>
+  <span class='resource-value'>$vm_disk</span>
+</div>
+<div class='resource-row'>
+  <span class='resource-label'>Load</span>
+  <span class='resource-value'>$vm_load</span>
+</div>
+</div>
+EOF
+                ;;
+            *)
+                echo ""
+                echo "--- $ip ---"
+                echo "Memory: $vm_mem"
+                echo "Disk:   $vm_disk"
+                echo "Load:   $vm_load"
+                ;;
+        esac
+    done
+
+    case "$OUTPUT_MODE" in
+        json) echo "  ]" ;;
+    esac
+}
+
+#===============================================================================
+# K3s STATUS
+#===============================================================================
+get_k3s_info() {
+    if ! command -v kubectl &>/dev/null; then
+        case "$OUTPUT_MODE" in
+            json) echo '  "k3s": { "status": "not_configured" }' ;;
+            html) echo "<div class='k3s-section'><p>K3s not configured on this host.</p></div>" ;;
+            *) echo "K3s: not configured" ;;
+        esac
+        return
+    fi
+
+    local nodes=$(kubectl get nodes --no-headers 2>/dev/null)
+    local top_output=$(kubectl top nodes --no-headers 2>/dev/null || echo "")
+
+    case "$OUTPUT_MODE" in
+        json)
+            echo '  "k3s": {'
+            echo '    "status": "available",'
+            echo '    "nodes": ['
+            local first=true
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                local name=$(echo "$line" | awk '{print $1}')
+                local status=$(echo "$line" | awk '{print $2}')
+                local role=$(echo "$line" | awk '{print $3}')
+                local cpu=""
+                local mem=""
+                if [[ -n "$top_output" ]]; then
+                    local top_line=$(echo "$top_output" | grep "^$name ")
+                    cpu=$(echo "$top_line" | awk '{print $3}')
+                    mem=$(echo "$top_line" | awk '{print $5}')
+                fi
+                [[ "$first" == true ]] && first=false || echo ","
+                echo "      { \"name\": \"$name\", \"status\": \"$status\", \"role\": \"$role\", \"cpu\": \"${cpu:-N/A}\", \"memory\": \"${mem:-N/A}\" }"
+            done <<< "$nodes"
+            echo "    ]"
+            echo "  }"
+            ;;
+        html)
+            cat <<EOF
+<div class='dashboard-section k3s-section'>
+<h3>☸️ K3s Cluster</h3>
+<table class='k3s-table'>
+<tr><th>Node</th><th>Status</th><th>Role</th><th>CPU</th><th>Memory</th></tr>
+EOF
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                local name=$(echo "$line" | awk '{print $1}')
+                local status=$(echo "$line" | awk '{print $2}')
+                local role=$(echo "$line" | awk '{print $3}')
+                local cpu=""
+                local mem=""
+                if [[ -n "$top_output" ]]; then
+                    local top_line=$(echo "$top_output" | grep "^$name ")
+                    cpu=$(echo "$top_line" | awk '{print $3}')
+                    mem=$(echo "$top_line" | awk '{print $5}')
+                fi
+                echo "<tr><td>$name</td><td>$status</td><td>$role</td><td>${cpu:-N/A}</td><td>${mem:-N/A}</td></tr>"
+            done <<< "$nodes"
+            echo "</table></div>"
+            ;;
+        *)
+            echo ""
+            echo "=== K3s ==="
+            echo "$nodes"
+            echo ""
+            if [[ -n "$top_output" ]]; then
+                echo "$top_output"
+            fi
+            ;;
+    esac
+}
+
+#===============================================================================
+# MAIN
+#===============================================================================
+case "$OUTPUT_MODE" in
+    json)
+        echo "{"
+        get_host_info
+        echo ","
+        get_vm_info
+        echo ","
+        get_k3s_info
+        echo "}"
+        ;;
+    html)
+        echo "<div class='dashboard'>"
+        get_host_info
+        get_vm_info
+        get_k3s_info
+        echo "</div>"
+        ;;
+    *)
+        get_host_info
+        get_vm_info
+        get_k3s_info
+        ;;
+esac
