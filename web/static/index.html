@@ -3,247 +3,1575 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Network Recovery Tool</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Infrastructure Operations Center</title>
+    <style>
+        :root {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #0d1130;
+            --bg-tertiary: #151a3a;
+            --bg-hover: #1a1f3a;
+            --border: #2a2f4a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #8890b0;
+            --text-muted: #6a7090;
+            --accent: #64b5f6;
+            --accent-hover: #90caf9;
+            --success: #4caf50;
+            --warning: #ff9800;
+            --error: #f44336;
+            --info: #2196f3;
+            --sidebar-width: 280px;
+            --drawer-width: 420px;
+            --header-height: 48px;
+            --statusbar-height: 28px;
+            --actionbar-height: 44px;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'SF Mono', Consolas, monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* ============ HEADER ============ */
+        .header {
+            background: var(--bg-tertiary);
+            height: var(--header-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header-left h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--accent);
+            letter-spacing: 0.5px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .status-dot.warning { background: var(--warning); }
+        .status-dot.error { background: var(--error); }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        /* Search */
+        .search-container {
+            position: relative;
+        }
+        .search-input {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 6px 12px 6px 32px;
+            border-radius: 4px;
+            font-size: 13px;
+            width: 240px;
+            transition: all 0.2s;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            width: 320px;
+            background: var(--bg-primary);
+        }
+        .search-input::placeholder { color: var(--text-muted); }
+        .search-icon {
+            position: absolute;
+            left: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-top: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+        }
+        .search-results.show { display: block; }
+        .search-result-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .search-result-item:hover { background: var(--bg-hover); }
+        .search-result-item .type-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        
+        /* Alert bell */
+        .alert-bell {
+            position: relative;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .alert-bell:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .alert-count {
+            position: absolute;
+            top: 0;
+            right: 2px;
+            background: var(--error);
+            color: white;
+            font-size: 10px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        /* ============ ACTION BAR ============ */
+        .action-bar {
+            background: var(--bg-secondary);
+            height: var(--actionbar-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .action-bar-btn {
+            padding: 6px 12px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .action-bar-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--border);
+        }
+        .action-bar-btn.emergency {
+            background: var(--error);
+            color: white;
+            border-color: var(--error);
+            font-weight: bold;
+        }
+        .action-bar-btn.emergency:hover {
+            background: #d32f2f;
+        }
+        .action-bar-separator {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+            margin: 0 4px;
+        }
+        
+        /* ============ MAIN LAYOUT ============ */
+        .main-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* ============ SIDEBAR ============ */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-section {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-section-header {
+            padding: 8px 16px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 600;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+        .sidebar-section-header:hover { color: var(--text-secondary); }
+        .sidebar-tree {
+            list-style: none;
+        }
+        .tree-item {
+            padding: 4px 16px 4px 24px;
+            font-size: 13px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.1s;
+        }
+        .tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .tree-item.active { background: var(--bg-hover); color: var(--accent); border-left: 2px solid var(--accent); }
+        .tree-item .tree-icon { font-size: 14px; width: 16px; text-align: center; }
+        .tree-item .tree-count { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+        .tree-item .tree-status {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-left: auto;
+        }
+        .tree-status.ok { background: var(--success); }
+        .tree-status.warn { background: var(--warning); }
+        .tree-status.err { background: var(--error); }
+        
+        .tree-children { list-style: none; }
+        .tree-children .tree-item { padding-left: 44px; font-size: 12px; }
+        
+        /* ============ CONTENT AREA ============ */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            background: var(--bg-primary);
+        }
+        
+        /* Cards */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 14px;
+        }
+        .card-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+        .card-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .card-detail {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        /* Panels */
+        .panel {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+        .panel-header {
+            padding: 10px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .panel-body {
+            padding: 12px;
+        }
+        
+        /* Tables */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .data-table th {
+            text-align: left;
+            padding: 8px 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+        .data-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .data-table tr:hover td { background: var(--bg-hover); cursor: pointer; }
+        .data-table tr.selected td { background: rgba(100, 181, 246, 0.1); }
+        
+        /* Status badges */
+        .badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .badge-success { background: rgba(76, 175, 80, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(255, 152, 0, 0.2); color: var(--warning); }
+        .badge-error { background: rgba(244, 67, 54, 0.2); color: var(--error); }
+        .badge-info { background: rgba(33, 150, 243, 0.2); color: var(--info); }
+        
+        /* Sparklines */
+        .sparkline {
+            display: flex;
+            align-items: flex-end;
+            gap: 1px;
+            height: 30px;
+            margin-top: 4px;
+        }
+        .sparkline-bar {
+            flex: 1;
+            background: var(--accent);
+            border-radius: 1px 1px 0 0;
+            min-height: 2px;
+            opacity: 0.7;
+            transition: height 0.3s;
+        }
+        
+        /* Timeline */
+        .timeline-item {
+            display: flex;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+        .timeline-time {
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+            min-width: 40px;
+        }
+        .timeline-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+        .timeline-icon.success { background: rgba(76,175,80,0.2); color: var(--success); }
+        .timeline-icon.warning { background: rgba(255,152,0,0.2); color: var(--warning); }
+        .timeline-icon.error { background: rgba(244,67,54,0.2); color: var(--error); }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 12px;
+        }
+        .tab {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab:hover { color: var(--text-primary); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        
+        /* ============ DRAWER ============ */
+        .drawer-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .drawer-overlay.open {
+            opacity: 1;
+            pointer-events: all;
+        }
+        .drawer {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: var(--drawer-width);
+            height: 100%;
+            background: var(--bg-tertiary);
+            border-left: 1px solid var(--border);
+            z-index: 201;
+            transform: translateX(100%);
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+        }
+        .drawer.open { transform: translateX(0); }
+        .drawer-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .drawer-header h3 { font-size: 14px; color: var(--accent); }
+        .drawer-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+        }
+        .drawer-close:hover { color: var(--text-primary); }
+        .drawer-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .drawer-actions {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 6px 14px;
+            border: 1px solid var(--border);
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: var(--border); }
+        .btn-primary { background: var(--info); border-color: var(--info); color: white; }
+        .btn-primary:hover { background: #1976d2; }
+        .btn-danger { background: var(--error); border-color: var(--error); color: white; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-success { background: var(--success); border-color: var(--success); color: white; }
+        
+        /* ============ STATUS BAR ============ */
+        .status-bar {
+            background: var(--bg-secondary);
+            height: var(--statusbar-height);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .status-bar-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        /* Job queue */
+        .job-item {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .job-progress {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .job-progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s;
+        }
+        
+        /* Alerts panel */
+        .alerts-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            width: 360px;
+            max-height: 400px;
+            overflow-y: auto;
+            display: none;
+            z-index: 300;
+            margin-top: 4px;
+        }
+        .alerts-dropdown.show { display: block; }
+        .alert-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .alert-item:hover { background: var(--bg-hover); }
+        
+        /* Multi-select bar */
+        .multiselect-bar {
+            background: var(--accent);
+            color: var(--bg-primary);
+            padding: 8px 16px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .multiselect-bar.show { display: flex; }
+        
+        /* Terminal */
+        .terminal {
+            background: #000;
+            color: #0f0;
+            font-family: 'SF Mono', Consolas, monospace;
+            padding: 12px;
+            border-radius: 4px;
+            height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .terminal-line { white-space: pre-wrap; }
+        .terminal-prompt { color: var(--accent); }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="logo">
-                <span class="icon">🌐</span>
-                <h1>Network Recovery Tool</h1>
-            </div>
-            <div class="status-badge" id="statusBadge">
-                <span class="dot" id="statusDot"></span>
-                <span id="statusText">Checking...</span>
-            </div>
-        </header>
-
-        <nav>
-            <button class="btn btn-primary" onclick="runAction('status')">
-                <span class="icon">📊</span> Status
-            </button>
-            <button class="btn btn-success" onclick="runAction('diagnose')">
-                <span class="icon">🔍</span> Diagnose
-            </button>
-            <button class="btn btn-warning" onclick="runAction('repair')">
-                <span class="icon">🔧</span> Repair
-            </button>
-            <button class="btn btn-info" onclick="runAction('snapshot')">
-                <span class="icon">💾</span> Snapshot
-            </button>
-            <button class="btn btn-dashboard" onclick="switchTab('dashboard')">
-                <span class="icon">📈</span> Dashboard
-            </button>
-            <button class="btn btn-danger" onclick="clearOutput()">
-                <span class="icon">🗑️</span> Clear
-            </button>
-        </nav>
-
-        <div class="layers" id="layers">
-            <span class="layer" data-layer="1">Physical</span>
-            <span class="layer" data-layer="2">Link</span>
-            <span class="layer" data-layer="3">IP</span>
-            <span class="layer" data-layer="4">Routing</span>
-            <span class="layer" data-layer="5">Gateway</span>
-            <span class="layer" data-layer="6">Internet</span>
-            <span class="layer" data-layer="7">DNS</span>
-            <span class="layer" data-layer="8">HTTPS</span>
-            <span class="layer" data-layer="9">NetworkManager</span>
-            <span class="layer" data-layer="10">Virtualization</span>
-            <span class="layer" data-layer="11">Kubernetes</span>
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-left">
+            <span class="status-dot" id="status-dot"></span>
+            <h1>Infrastructure Operations Center</h1>
         </div>
-
-        <!-- Main Output Area -->
-        <div class="output" id="output">
-            <div class="placeholder">Click an action to begin</div>
+        <div class="header-right">
+            <div class="search-container">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="search-input" id="global-search" placeholder="Search resources... (Ctrl+K)" oninput="handleSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';handleSearch('');this.blur();}">
+                <div class="search-results" id="search-results"></div>
+            </div>
+            <button class="alert-bell" onclick="toggleAlerts()" title="Alerts">
+                🔔
+                <span class="alert-count" id="alert-count" style="display:none">0</span>
+            </button>
+            <div class="alerts-dropdown" id="alerts-dropdown"></div>
         </div>
-
-        <!-- Dashboard Tab Content -->
-        <div id="dashboard">
-            <h2>📈 System Dashboard</h2>
-            <div id="dashboard-content">
-                <div class="placeholder">Loading dashboard...</div>
+    </div>
+    
+    <!-- ACTION BAR -->
+    <div class="action-bar">
+        <button class="action-bar-btn" onclick="refreshAll()" title="Refresh">🔄 Refresh</button>
+        <button class="action-bar-btn" onclick="runDiagnostics()" title="Diagnose">🔍 Diagnose</button>
+        <button class="action-bar-btn" onclick="runRepair()" title="Repair">🔧 Repair</button>
+        <button class="action-bar-btn" onclick="createSnapshot()" title="Snapshot">💾 Snapshot</button>
+        <span class="action-bar-separator"></span>
+        <button class="action-bar-btn" onclick="restartSelected()" title="Restart Selected">▶ Restart</button>
+        <button class="action-bar-btn emergency" onclick="emergencyMode()" title="Emergency Mode">⚠ Emergency</button>
+        <span class="action-bar-separator"></span>
+        <button class="action-bar-btn" onclick="toggleTerminal()" title="Terminal">>_ Terminal</button>
+        <button class="action-bar-btn" onclick="showAuditLog()" title="Audit Log">📋 Audit</button>
+    </div>
+    
+    <!-- MULTI-SELECT BAR -->
+    <div class="multiselect-bar" id="multiselect-bar">
+        <span id="selected-count">0 selected</span>
+        <button class="btn btn-primary" onclick="bulkRestart()">Restart All</button>
+        <button class="btn btn-danger" onclick="bulkDelete()">Delete All</button>
+        <button class="btn" onclick="clearSelection()">Clear</button>
+    </div>
+    
+    <!-- MAIN THREE-PANE LAYOUT -->
+    <div class="main-layout">
+        <!-- LEFT SIDEBAR - Resource Tree -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('infra-tree')">▼ Infrastructure</div>
+                <ul class="tree-children" id="infra-tree">
+                    <li class="tree-item active" onclick="selectResource('host')">
+                        <span class="tree-icon">🖥</span> Host <span class="tree-count" id="host-name">mx</span>
+                        <span class="tree-status ok"></span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('vms')">
+                        <span class="tree-icon">📦</span> VMs <span class="tree-count" id="vm-count-sidebar">0</span>
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('k8s-tree')">▼ Kubernetes</div>
+                <ul class="tree-children" id="k8s-tree">
+                    <li class="tree-item" onclick="selectResource('k8s-nodes')">
+                        <span class="tree-icon">🔲</span> Nodes <span class="tree-count" id="node-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-pods')">
+                        <span class="tree-icon">⬛</span> Pods <span class="tree-count" id="pod-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-deployments')">
+                        <span class="tree-icon">📋</span> Deployments
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-services')">
+                        <span class="tree-icon">🔗</span> Services
+                    </li>
+                    <li class="tree-item" onclick="selectResource('k8s-jobs')">
+                        <span class="tree-icon">⏱</span> Jobs
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('recovery-tree')">▼ Recovery</div>
+                <ul class="tree-children" id="recovery-tree">
+                    <li class="tree-item" onclick="selectResource('problems')">
+                        <span class="tree-icon">⚠</span> Problems <span class="tree-count" id="problem-count-sidebar">0</span>
+                    </li>
+                    <li class="tree-item" onclick="selectResource('jobs')">
+                        <span class="tree-icon">📊</span> Job Queue
+                    </li>
+                    <li class="tree-item" onclick="selectResource('automation')">
+                        <span class="tree-icon">🤖</span> Automations
+                    </li>
+                </ul>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-section-header" onclick="toggleTreeSection('monitor-tree')">▼ Monitoring</div>
+                <ul class="tree-children" id="monitor-tree">
+                    <li class="tree-item" onclick="selectResource('timeline')">
+                        <span class="tree-icon">📅</span> Timeline
+                    </li>
+                    <li class="tree-item" onclick="selectResource('events')">
+                        <span class="tree-icon">📝</span> Events
+                    </li>
+                </ul>
             </div>
         </div>
-
-        <div class="progress-container" id="progressContainer" style="display:none">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <span class="progress-text" id="progressText">0%</span>
+        
+        <!-- CENTER CONTENT -->
+        <div class="content-area" id="content-area">
+            <!-- Dynamic content loaded here -->
         </div>
-
-        <footer>
-            <span>v2.0.0</span>
-            <span id="connectionStatus">● Connected</span>
-        </footer>
+    </div>
+    
+    <!-- ACTION DRAWER -->
+    <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+    <div class="drawer" id="drawer">
+        <div class="drawer-header">
+            <h3 id="drawer-title">Resource Details</h3>
+            <button class="drawer-close" onclick="closeDrawer()">×</button>
+        </div>
+        <div class="drawer-body" id="drawer-body"></div>
+        <div class="drawer-actions" id="drawer-actions"></div>
+    </div>
+    
+    <!-- TERMINAL (hidden by default) -->
+    <div class="terminal" id="terminal" style="display:none;">
+        <div id="terminal-output">
+            <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+        </div>
+    </div>
+    
+    <!-- STATUS BAR -->
+    <div class="status-bar">
+        <span class="status-bar-item">● <span id="sb-connection">Connected</span></span>
+        <span class="status-bar-item">⏱ <span id="sb-last-update">0.0s ago</span></span>
+        <span class="status-bar-item">🖥 <span id="sb-hosts">1 Host</span></span>
+        <span class="status-bar-item">📦 <span id="sb-vms">0 VMs</span></span>
+        <span class="status-bar-item">⬛ <span id="sb-pods">0 Pods</span></span>
+        <span class="status-bar-item">🔗 <span id="sb-services">0 Services</span></span>
+        <span style="margin-left:auto;">v3.0.0</span>
     </div>
 
-    <script src="app.js"></script>
     <script>
-    //===========================================================================
-    // Dashboard Functions
-    //===========================================================================
-
-    function switchTab(tab) {
-        const output = document.getElementById('output');
-        const dashboard = document.getElementById('dashboard');
-        const layers = document.getElementById('layers');
-        const progress = document.getElementById('progressContainer');
-
-        if (tab === 'dashboard') {
-            output.style.display = 'none';
-            layers.style.display = 'none';
-            progress.style.display = 'none';
-            dashboard.style.display = 'block';
-            loadDashboard();
-        } else {
-            dashboard.style.display = 'none';
-            output.style.display = 'block';
-            layers.style.display = 'flex';
-            progress.style.display = 'none';
+        // ============================================================
+        // STATE
+        // ============================================================
+        const state = {
+            ws: null,
+            connected: false,
+            selectedResource: 'host',
+            selectedItems: new Set(),
+            currentView: 'overview',
+            metrics: {},
+            vms: [],
+            kubernetes: null,
+            events: [],
+            alerts: [],
+            jobs: [],
+            lastUpdate: Date.now()
+        };
+        
+        const wsUrl = `ws://${window.location.hostname}:9877`;
+        
+        // ============================================================
+        // WEBSOCKET
+        // ============================================================
+        function connectWebSocket() {
+            state.ws = new WebSocket(wsUrl);
+            
+            state.ws.onopen = () => {
+                console.log('WebSocket connected');
+                state.connected = true;
+                document.getElementById('status-dot').className = 'status-dot';
+                document.getElementById('sb-connection').textContent = 'Connected';
+                refreshAll();
+            };
+            
+            state.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch(e) {
+                    console.error('Parse error:', e);
+                }
+            };
+            
+            state.ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                state.connected = false;
+                document.getElementById('status-dot').className = 'status-dot warning';
+                document.getElementById('sb-connection').textContent = 'Reconnecting...';
+                setTimeout(connectWebSocket, 2000);
+            };
+            
+            state.ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                state.connected = false;
+            };
         }
-    }
-
-    async function loadDashboard() {
-        const content = document.getElementById('dashboard-content');
-        content.innerHTML = '<div class="placeholder">Loading dashboard...</div>';
-
-        try {
-            const response = await fetch('/api/dashboard');
-            if (!response.ok) throw new Error('API unavailable');
-            const data = await response.json();
-
-            if (data.error) {
-                content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
-                    escapeHtml(data.error) + '</div>';
+        
+        function sendCommand(command, params = {}) {
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                state.ws.send(JSON.stringify({ command, params, request_id: Date.now().toString(36) }));
+            }
+        }
+        
+        function handleMessage(data) {
+            state.lastUpdate = Date.now();
+            
+            switch(data.type) {
+                case 'connected':
+                    console.log('Server connected:', data.data);
+                    break;
+                case 'metrics_update':
+                    state.metrics = data.data;
+                    updateMetricsDisplay(data.data);
+                    updateStatusBar();
+                    break;
+                case 'events_update':
+                    state.events = data.data;
+                    if (state.currentView === 'events') renderEvents();
+                    break;
+                case 'get_metrics_response':
+                    state.metrics = data.data;
+                    updateMetricsDisplay(data.data);
+                    break;
+                case 'get_vms_response':
+                    state.vms = data.data;
+                    if (state.currentView === 'vms') renderVMList();
+                    updateSidebarCounts();
+                    break;
+                case 'get_kubernetes_response':
+                    state.kubernetes = data.data;
+                    if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                    updateSidebarCounts();
+                    break;
+                case 'get_events_response':
+                    state.events = data.data;
+                    if (state.currentView === 'events') renderEvents();
+                    break;
+                case 'get_timeline_response':
+                    if (state.currentView === 'timeline') renderTimeline(data.data);
+                    break;
+                case 'get_alerts_response':
+                    state.alerts = data.data;
+                    updateAlertBell();
+                    break;
+                case 'get_problems_response':
+                    if (state.currentView === 'problems') renderProblems(data.data);
+                    break;
+                case 'run_diagnostics_response':
+                    showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
+                    break;
+                case 'run_repair_response':
+                    showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
+                    break;
+                case 'execute_action_response':
+                    if (data.data) showNotification('Action', `Job ${data.data.id} started`, 'info');
+                    break;
+                case 'search_response':
+                    renderSearchResults(data.data);
+                    break;
+            }
+        }
+        
+        // ============================================================
+        // SIDEBAR TREE
+        // ============================================================
+        function toggleTreeSection(id) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function selectResource(type) {
+            state.selectedResource = type;
+            state.currentView = type;
+            
+            // Update active state
+            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
+            event.target.closest('.tree-item')?.classList.add('active');
+            
+            // Load content
+            switch(type) {
+                case 'host': renderHostView(); break;
+                case 'vms': renderVMList(); break;
+                case 'k8s-nodes': renderK8sView('k8s-nodes'); break;
+                case 'k8s-pods': renderK8sView('k8s-pods'); break;
+                case 'k8s-deployments': renderK8sView('k8s-deployments'); break;
+                case 'k8s-services': renderK8sView('k8s-services'); break;
+                case 'k8s-jobs': renderK8sView('k8s-jobs'); break;
+                case 'problems': renderProblems(); break;
+                case 'jobs': renderJobQueue(); break;
+                case 'automation': renderAutomations(); break;
+                case 'timeline': renderTimeline(); break;
+                case 'events': renderEvents(); break;
+                default: renderOverview(); break;
+            }
+        }
+        
+        // ============================================================
+        // VIEW RENDERERS
+        // ============================================================
+        function renderOverview() {
+            const m = state.metrics;
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || { nodes: [], pods: [] };
+            const runningVMs = vms.filter(v => v.state === 'running').length;
+            
+            document.getElementById('content-area').innerHTML = `
+                <!-- Health Status -->
+                <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
+                    <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">🟢 Infrastructure Healthy</h2>
+                    <div class="cards-grid">
+                        <div class="card">
+                            <div class="card-label">Hosts</div>
+                            <div class="card-value">1</div>
+                            <div class="card-detail">Online</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">VMs</div>
+                            <div class="card-value">${runningVMs}</div>
+                            <div class="card-detail">Running</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Nodes</div>
+                            <div class="card-value">${k8s.nodes.filter(n => n.status === 'Ready').length}</div>
+                            <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Pods</div>
+                            <div class="card-value">${k8s.pods.filter(p => p.status === 'Running').length}</div>
+                            <div class="card-detail">Running / ${k8s.pods.length} Total</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Services</div>
+                            <div class="card-value">${(k8s.services || []).length}</div>
+                            <div class="card-detail">Healthy</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; display: flex; gap: 16px;">
+                        <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning').length}</span>
+                        <span style="color: #f44336;">Critical: ${state.alerts.filter(a => a.severity === 'critical').length}</span>
+                    </div>
+                </div>
+                
+                <!-- Metrics with Sparklines -->
+                <div class="cards-grid">
+                    <div class="card">
+                        <div class="card-label">CPU</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="cpu-value">${m?.cpu || 0}%</div>
+                        <div class="sparkline" id="cpu-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">RAM</div>
+                        <div style="font-size: 24px; font-weight: bold;" id="ram-value">${m?.ram || 0}%</div>
+                        <div class="sparkline" id="ram-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Network</div>
+                        <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
+                        <div class="sparkline" id="net-sparkline"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Disk</div>
+                        <div style="font-size: 24px; font-weight: bold;">${m?.disk || 0}%</div>
+                        <div class="sparkline" id="disk-sparkline"></div>
+                    </div>
+                </div>
+                
+                <!-- Events & Tasks -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="panel">
+                        <div class="panel-header">Recent Events</div>
+                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-events">
+                            ${(state.events || []).slice(0, 10).map(e => `
+                                <div class="timeline-item">
+                                    <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                    <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? '✓' : e.severity === 'warning' ? '⚠' : e.severity === 'error' ? '✗' : 'ℹ'}</span>
+                                    <span>${e.message}</span>
+                                </div>
+                            `).join('') || '<div style="color:#6a7090;font-size:12px;">No events</div>'}
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">Current Jobs</div>
+                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-jobs">
+                            <div style="color:#6a7090;font-size:12px;">No active jobs</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Request sparkline data
+            sendCommand('get_metrics_history', { period: '1h' });
+        }
+        
+        function renderHostView() {
+            const m = state.metrics;
+            const host = state.metrics;
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Host Details</div>
+                    <div class="panel-body">
+                        <div class="cards-grid">
+                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${host?.name || window.location.hostname}</div></div>
+                            <div class="card"><div class="card-label">CPU</div><div class="card-value">${m?.cpu || 0}%</div></div>
+                            <div class="card"><div class="card-label">RAM</div><div class="card-value">${m?.ram || 0}%</div><div class="card-detail">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</div></div>
+                            <div class="card"><div class="card-label">Disk</div><div class="card-value">${m?.disk || 0}%</div></div>
+                            <div class="card"><div class="card-label">Load</div><div class="card-value" style="font-size:18px;">${m?.load_avg_1m || 0}</div></div>
+                            <div class="card"><div class="card-label">Processes</div><div class="card-value">${m?.processes || 0}</div></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('metrics')">Metrics</button>
+                    <button class="tab" onclick="switchTab('processes')">Processes</button>
+                    <button class="tab" onclick="switchTab('network')">Network</button>
+                    <button class="tab" onclick="switchTab('logs')">Logs</button>
+                </div>
+                <div id="tab-content">
+                    <div id="tab-metrics">
+                        <div class="cards-grid">
+                            <div class="card"><div class="card-label">CPU (1h)</div><div class="sparkline" id="spark-cpu"></div></div>
+                            <div class="card"><div class="card-label">RAM (1h)</div><div class="sparkline" id="spark-ram"></div></div>
+                            <div class="card"><div class="card-label">Network (1h)</div><div class="sparkline" id="spark-net"></div></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            sendCommand('get_metrics_history', { period: '1h' });
+        }
+        
+        function renderVMList() {
+            const vms = state.vms || [];
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Virtual Machines <span style="color:#6a7090;font-weight:normal;">(${vms.length} total)</span></div>
+                    <div class="panel-body" style="padding:0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'vm')"></th>
+                                    <th>Name</th>
+                                    <th>State</th>
+                                    <th>IP</th>
+                                    <th>CPU</th>
+                                    <th>RAM</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${vms.map(vm => `
+                                    <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
+                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
+                                        <td style="color:#64b5f6;">${vm.name}</td>
+                                        <td><span class="badge ${vm.state === 'running' ? 'badge-success' : 'badge-error'}">${vm.state}</span></td>
+                                        <td>${vm.ip || 'unknown'}</td>
+                                        <td>${vm.cpu || 'N/A'}</td>
+                                        <td>${vm.ram || 'N/A'}</td>
+                                        <td onclick="event.stopPropagation()">
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;">▶</button>
+                                            <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;">⏹</button>
+                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;">💾</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderK8sView(type) {
+            const k8s = state.kubernetes || {};
+            let data = [];
+            let title = '';
+            
+            switch(type) {
+                case 'k8s-nodes': data = k8s.nodes || []; title = 'Nodes'; break;
+                case 'k8s-pods': data = k8s.pods || []; title = 'Pods'; break;
+                case 'k8s-deployments': data = k8s.deployments || []; title = 'Deployments'; break;
+                case 'k8s-services': data = k8s.services || []; title = 'Services'; break;
+                case 'k8s-jobs': data = (k8s.jobs || []).concat(k8s.cronjobs || []); title = 'Jobs'; break;
+            }
+            
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Kubernetes ${title} <span style="color:#6a7090;font-weight:normal;">(${data.length})</span></div>
+                    <div class="panel-body" style="padding:0;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                                    <th>Name</th>
+                                    <th>Namespace</th>
+                                    <th>Status</th>
+                                    <th>Age</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.map(item => `
+                                    <tr class="${state.selectedItems.has('k8s:'+item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:'+item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                                        <td style="color:#64b5f6;">${item.name}</td>
+                                        <td>${item.namespace || '-'}</td>
+                                        <td><span class="badge ${getK8sStatusBadge(item.status || item.state)}">${item.status || item.state || '-'}</span></td>
+                                        <td>${item.age || '-'}</td>
+                                        <td onclick="event.stopPropagation()">
+                                            <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;">▶</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderProblems(problems) {
+            problems = problems || [];
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Detected Problems <span style="color:#6a7090;font-weight:normal;">(${problems.length})</span></div>
+                    <div class="panel-body">
+                        ${problems.length === 0 ? '<div style="color:#6a7090;font-size:12px;padding:20px;text-align:center;">✅ No problems detected</div>' : ''}
+                        ${problems.map(p => `
+                            <div style="background:#0d1130;padding:14px;border-radius:4px;margin-bottom:10px;border-left:3px solid ${p.severity === 'critical' ? '#f44336' : '#ff9800'};">
+                                <div style="font-weight:bold;color:${p.severity === 'critical' ? '#f44336' : '#ff9800'};margin-bottom:6px;">${p.severity === 'critical' ? '🔴' : '🟡'} ${p.message}</div>
+                                <div style="font-size:11px;color:#8890b0;margin-bottom:10px;">${p.suggested_action || ''}</div>
+                                <button class="btn btn-primary" onclick="runRepair('${p.message}')">🔧 Fix</button>
+                                <button class="btn" onclick="runDiagnostics()">🔍 Diagnose</button>
+                                <button class="btn">Ignore</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderJobQueue() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Job Queue</div>
+                    <div class="panel-body" id="job-queue-content">
+                        <div style="color:#6a7090;font-size:12px;">Loading jobs...</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderAutomations() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Automation Rules</div>
+                    <div class="panel-body">
+                        <div class="job-item">
+                            <div style="font-weight:bold;color:#64b5f6;">Pod CrashLoop Recovery</div>
+                            <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
+                            <div style="font-size:11px;color:#6a7090;">Actions: Restart → Wait → Verify</div>
+                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                <input type="checkbox" checked> Enabled
+                            </label>
+                        </div>
+                        <div class="job-item">
+                            <div style="font-weight:bold;color:#64b5f6;">VM Recovery</div>
+                            <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
+                            <div style="font-size:11px;color:#6a7090;">Actions: Ping → SSH → Restart Network → Reboot</div>
+                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                <input type="checkbox" checked> Enabled
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderTimeline(data) {
+            data = data || [];
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Event Timeline</div>
+                    <div class="panel-body" style="max-height:600px;overflow-y:auto;">
+                        ${data.map(e => `
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? '✓' : e.severity === 'warning' ? '⚠' : '✗'}</span>
+                                <div>
+                                    <div style="font-weight:500;">${e.type.toUpperCase()}</div>
+                                    <div style="font-size:11px;color:#8890b0;">${e.message}</div>
+                                </div>
+                            </div>
+                        `).join('') || '<div style="color:#6a7090;padding:20px;text-align:center;">No events in timeline</div>'}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderEvents() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Live Event Stream</div>
+                    <div class="panel-body" style="max-height:600px;overflow-y:auto;" id="live-event-stream">
+                        ${(state.events || []).map(e => `
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? '✓' : e.severity === 'warning' ? '⚠' : '✗'}</span>
+                                <span>${e.message}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // ============================================================
+        // DRAWER
+        // ============================================================
+        function openDrawer(type, name) {
+            const drawer = document.getElementById('drawer');
+            const overlay = document.getElementById('drawer-overlay');
+            const title = document.getElementById('drawer-title');
+            const body = document.getElementById('drawer-body');
+            const actions = document.getElementById('drawer-actions');
+            
+            title.textContent = name;
+            
+            if (type === 'vm' || type === 'k8s-nodes' && name) {
+                body.innerHTML = `
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                        <span class="badge badge-success">Running</span>
+                    </div>
+                    <div class="cards-grid" style="grid-template-columns:1fr 1fr;">
+                        <div class="card"><div class="card-label">CPU</div><div style="font-size:18px;">23%</div></div>
+                        <div class="card"><div class="card-label">RAM</div><div style="font-size:18px;">54%</div></div>
+                        <div class="card"><div class="card-label">Disk</div><div style="font-size:18px;">31%</div></div>
+                        <div class="card"><div class="card-label">Network</div><div style="font-size:18px;">200Mbps</div></div>
+                    </div>
+                    
+                    <div class="tabs" style="margin-top:16px;">
+                        <button class="tab active">Overview</button>
+                        <button class="tab">Metrics</button>
+                        <button class="tab">Snapshots</button>
+                        <button class="tab">Processes</button>
+                        <button class="tab">Network</button>
+                        <button class="tab">Logs</button>
+                    </div>
+                `;
+                
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="executeAction('vm', '${name}', 'restart')">▶ Restart</button>
+                    <button class="btn btn-danger" onclick="executeAction('vm', '${name}', 'shutdown')">⏹ Shutdown</button>
+                    <button class="btn" onclick="executeAction('vm', '${name}', 'snapshot')">💾 Snapshot</button>
+                    <button class="btn">🔧 Repair</button>
+                    <button class="btn">💻 SSH</button>
+                    <button class="btn">📋 Logs</button>
+                    <button class="btn">🖥 Console</button>
+                `;
+            } else if (type === 'k8s-pods') {
+                body.innerHTML = `
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:11px;color:#8890b0;margin-bottom:4px;">STATUS</div>
+                        <span class="badge badge-success">Running</span>
+                    </div>
+                    <div style="margin-bottom:8px;"><strong>Name:</strong> ${name}</div>
+                    <div style="margin-bottom:8px;"><strong>Restarts:</strong> 0</div>
+                    <div style="margin-bottom:8px;"><strong>Age:</strong> 2h</div>
+                `;
+                
+                actions.innerHTML = `
+                    <button class="btn btn-primary" onclick="executeAction('pod', '${name}', 'restart')">▶ Restart</button>
+                    <button class="btn btn-danger">🗑 Delete</button>
+                    <button class="btn">📋 Logs</button>
+                    <button class="btn">📝 Describe</button>
+                    <button class="btn">💻 Exec</button>
+                    <button class="btn">🔗 Port Forward</button>
+                `;
+            }
+            
+            drawer.classList.add('open');
+            overlay.classList.add('open');
+        }
+        
+        function closeDrawer() {
+            document.getElementById('drawer').classList.remove('open');
+            document.getElementById('drawer-overlay').classList.remove('open');
+        }
+        
+        // ============================================================
+        // ACTIONS
+        // ============================================================
+        function refreshAll() {
+            sendCommand('get_metrics');
+            sendCommand('get_vms');
+            sendCommand('get_kubernetes');
+            sendCommand('get_events');
+            sendCommand('get_alerts');
+            sendCommand('get_problems');
+        }
+        
+        function runDiagnostics() {
+            sendCommand('run_diagnostics');
+            showNotification('Diagnostics', 'Running...', 'info');
+        }
+        
+        function runRepair(target) {
+            sendCommand('run_repair', { target: target || '' });
+            showNotification('Repair', 'Starting repair...', 'info');
+        }
+        
+        function createSnapshot() {
+            sendCommand('execute_action', { resource_type: 'vm', resource_name: '', action: 'snapshot' });
+        }
+        
+        function executeAction(type, name, action) {
+            sendCommand('execute_action', { resource_type: type, resource_name: name, action: action });
+            showNotification('Action', `${action} ${type} ${name}...`, 'info');
+        }
+        
+        function emergencyMode() {
+            if (confirm('⚠ EMERGENCY MODE - This will restart failed pods, repair networking, and flush caches. Continue?')) {
+                runRepair('all');
+                sendCommand('execute_action', { resource_type: 'pod', resource_name: 'all', action: 'restart' });
+            }
+        }
+        
+        // ============================================================
+        // SEARCH
+        // ============================================================
+        function handleSearch(query) {
+            if (query.length >= 2) {
+                sendCommand('search', { query });
+            } else {
+                document.getElementById('search-results').classList.remove('show');
+            }
+        }
+        
+        function renderSearchResults(results) {
+            const container = document.getElementById('search-results');
+            if (!results || results.length === 0) {
+                container.innerHTML = '<div class="search-result-item" style="color:#6a7090;">No results</div>';
+            } else {
+                container.innerHTML = results.map(r => `
+                    <div class="search-result-item" onclick="navigateToResource('${r.path}')">
+                        <span>${r.name}</span>
+                        <span class="type-badge">${r.type}</span>
+                    </div>
+                `).join('');
+            }
+            container.classList.add('show');
+        }
+        
+        function navigateToResource(path) {
+            document.getElementById('search-results').classList.remove('show');
+            document.getElementById('global-search').value = '';
+            // Navigate based on path
+        }
+        
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        function updateMetricsDisplay(m) {
+            const cpuEl = document.getElementById('cpu-value');
+            const ramEl = document.getElementById('ram-value');
+            if (cpuEl) cpuEl.textContent = (m?.cpu || 0) + '%';
+            if (ramEl) ramEl.textContent = (m?.ram || 0) + '%';
+        }
+        
+        function updateStatusBar() {
+            const elapsed = ((Date.now() - state.lastUpdate) / 1000).toFixed(1);
+            document.getElementById('sb-last-update').textContent = elapsed + 's ago';
+            
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            document.getElementById('sb-vms').textContent = vms.length + ' VMs';
+            document.getElementById('sb-pods').textContent = (k8s.pods || []).length + ' Pods';
+            document.getElementById('sb-services').textContent = (k8s.services || []).length + ' Services';
+        }
+        
+        function updateSidebarCounts() {
+            const vms = state.vms || [];
+            const k8s = state.kubernetes || {};
+            document.getElementById('vm-count-sidebar').textContent = vms.length;
+            document.getElementById('node-count-sidebar').textContent = (k8s.nodes || []).length;
+            document.getElementById('pod-count-sidebar').textContent = (k8s.pods || []).length;
+            document.getElementById('problem-count-sidebar').textContent = state.alerts.length;
+        }
+        
+        function updateAlertBell() {
+            const count = state.alerts.filter(a => !a.acknowledged).length;
+            const badge = document.getElementById('alert-count');
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
+        function toggleAlerts() {
+            const dropdown = document.getElementById('alerts-dropdown');
+            dropdown.innerHTML = state.alerts.map(a => `
+                <div class="alert-item" style="border-left:3px solid ${a.severity === 'critical' ? '#f44336' : '#ff9800'};">
+                    <div style="font-weight:bold;">${a.severity.toUpperCase()}</div>
+                    <div style="font-size:11px;">${a.message}</div>
+                    <div style="font-size:10px;color:#6a7090;">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                </div>
+            `).join('') || '<div class="alert-item" style="color:#6a7090;">No alerts</div>';
+            dropdown.classList.toggle('show');
+        }
+        
+        function showNotification(title, message, type) {
+            // Simple notification - could be enhanced with toast
+            console.log(`[${type}] ${title}: ${message}`);
+        }
+        
+        function getK8sStatusBadge(status) {
+            const s = (status || '').toLowerCase();
+            if (s.includes('running') || s.includes('ready') || s.includes('bound')) return 'badge-success';
+            if (s.includes('pending') || s.includes('waiting')) return 'badge-warning';
+            if (s.includes('fail') || s.includes('error') || s.includes('crash')) return 'badge-error';
+            return 'badge-info';
+        }
+        
+        function toggleSelectAll(checkbox, prefix) {
+            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                if (cb !== checkbox) {
+                    cb.checked = checkbox.checked;
+                }
+            });
+        }
+        
+        function toggleSelectItem(id) {
+            if (state.selectedItems.has(id)) {
+                state.selectedItems.delete(id);
+            } else {
+                state.selectedItems.add(id);
+            }
+            updateMultiselectBar();
+        }
+        
+        function updateMultiselectBar() {
+            const bar = document.getElementById('multiselect-bar');
+            const count = document.getElementById('selected-count');
+            if (state.selectedItems.size > 0) {
+                bar.classList.add('show');
+                count.textContent = state.selectedItems.size + ' selected';
+            } else {
+                bar.classList.remove('show');
+            }
+        }
+        
+        function clearSelection() {
+            state.selectedItems.clear();
+            updateMultiselectBar();
+            document.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        }
+        
+        function bulkRestart() {
+            state.selectedItems.forEach(id => {
+                const [type, name] = id.split(':');
+                executeAction(type, name, 'restart');
+            });
+            clearSelection();
+        }
+        
+        function bulkDelete() {
+            if (confirm(`Delete ${state.selectedItems.size} items?`)) {
+                state.selectedItems.forEach(id => {
+                    const [type, name] = id.split(':');
+                    executeAction(type, name, 'delete');
+                });
+                clearSelection();
+            }
+        }
+        
+        function toggleTerminal() {
+            const terminal = document.getElementById('terminal');
+            terminal.style.display = terminal.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function showAuditLog() {
+            sendCommand('get_audit_log');
+            document.getElementById('content-area').innerHTML = `
+                <div class="panel">
+                    <div class="panel-header">Audit Log</div>
+                    <div class="panel-body" id="audit-content">
+                        <div style="color:#6a7090;">Loading...</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function restartSelected() {
+            if (state.selectedItems.size === 0) {
+                alert('Select items first by checking the boxes');
                 return;
             }
-
-            renderDashboard(data);
-        } catch(e) {
-            content.innerHTML = '<div class="placeholder" style="color:#f44336">' + 
-                'Dashboard unavailable. Ensure network-recover-dashboard is installed.</div>';
+            bulkRestart();
         }
-    }
-
-    function renderDashboard(data) {
-        if (!data || !data.host) {
-            document.getElementById('dashboard-content').innerHTML = 
-                '<div class="placeholder">No data received.</div>';
-            return;
+        
+        // ============================================================
+        // KEYBOARD SHORTCUTS
+        // ============================================================
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('global-search').focus();
+            }
+            if (e.key === 'Escape') {
+                closeDrawer();
+                document.getElementById('search-results').classList.remove('show');
+                document.getElementById('alerts-dropdown').classList.remove('show');
+            }
+        });
+        
+        // Close search results on outside click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-container')) {
+                document.getElementById('search-results').classList.remove('show');
+            }
+            if (!e.target.closest('.alert-bell') && !e.target.closest('.alerts-dropdown')) {
+                document.getElementById('alerts-dropdown').classList.remove('show');
+            }
+        });
+        
+        // ============================================================
+        // INITIALIZATION
+        // ============================================================
+        function init() {
+            connectWebSocket();
+            renderOverview();
+            
+            // Periodic refresh
+            setInterval(() => {
+                if (state.connected) {
+                    sendCommand('get_metrics');
+                    sendCommand('get_vms');
+                    sendCommand('get_kubernetes');
+                    sendCommand('get_events');
+                    sendCommand('get_alerts');
+                }
+            }, 5000);
         }
-
-        const memPct = data.host.memory.percent || 0;
-        const diskPct = data.host.disk.percent || 0;
-
-        let html = '';
-
-        // Host Section
-        html += '<div class="dashboard-section">';
-        html += '<h3>🖥️ Host: ' + escapeHtml(data.host.name) + '</h3>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Memory</span>';
-        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + memPct + '%"></div></div>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.memory.used) + ' / ' + 
-            escapeHtml(data.host.memory.total) + 
-            ' (' + memPct + '%)</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Swap</span>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.swap.used) + ' / ' + 
-            escapeHtml(data.host.swap.total) + '</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Disk</span>';
-        html += '<div class="resource-bar"><div class="resource-fill" style="width:' + diskPct + '%"></div></div>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.disk.info) + '</span>';
-        html += '</div>';
-
-        html += '<div class="resource-row">';
-        html += '<span class="resource-label">Load</span>';
-        html += '<span class="resource-value">' + 
-            escapeHtml(data.host.load) + '</span>';
-        html += '</div>';
-        html += '</div>';
-
-        // VM Sections
-        if (data.vms && data.vms.length > 0) {
-            data.vms.forEach(vm => {
-                const vmMemPct = extractPercent(vm.memory);
-                html += '<div class="dashboard-section vm-section">';
-                html += '<h3>🖥️ VM: ' + escapeHtml(vm.ip) + '</h3>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Memory</span>';
-                html += '<div class="resource-bar"><div class="resource-fill" style="width:' + vmMemPct + '%"></div></div>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.memory) + '</span>';
-                html += '</div>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Disk</span>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.disk) + '</span>';
-                html += '</div>';
-
-                html += '<div class="resource-row">';
-                html += '<span class="resource-label">Load</span>';
-                html += '<span class="resource-value">' + 
-                    escapeHtml(vm.load) + '</span>';
-                html += '</div>';
-                html += '</div>';
-            });
-        }
-
-        // K3s Section
-        if (data.k3s && data.k3s.status === 'available' && data.k3s.nodes) {
-            html += '<div class="dashboard-section k3s-section">';
-            html += '<h3>☸️ K3s Cluster</h3>';
-            html += '<table class="k3s-table">';
-            html += '<tr><th>Node</th><th>Status</th><th>Role</th><th>CPU</th><th>Memory</th></tr>';
-            data.k3s.nodes.forEach(node => {
-                const statusClass = node.status === 'Ready' ? 'status-ready' : 'status-not-ready';
-                html += '<tr>';
-                html += '<td>' + escapeHtml(node.name) + '</td>';
-                html += '<td class="' + statusClass + '">' + 
-                    escapeHtml(node.status) + '</td>';
-                html += '<td>' + escapeHtml(node.role) + '</td>';
-                html += '<td>' + escapeHtml(node.cpu || 'N/A') + '</td>';
-                html += '<td>' + escapeHtml(node.memory || 'N/A') + '</td>';
-                html += '</tr>';
-            });
-            html += '</table></div>';
-        }
-
-        document.getElementById('dashboard-content').innerHTML = html;
-    }
-
-    function extractPercent(str) {
-        if (!str) return 0;
-        const match = str.match(/(\d+)%/);
-        return match ? parseInt(match[1]) : 0;
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
-    // Load dashboard on page load if it was the last active tab
-    document.addEventListener('DOMContentLoaded', function() {
-        // Pre-fetch dashboard data so it's ready when user switches tabs
-        fetch('/api/dashboard').catch(() => {});
-    });
+        
+        // Start the application
+        document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
