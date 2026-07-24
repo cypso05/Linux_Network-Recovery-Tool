@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Infrastructure Operations Center v3.1.0 - Full WebSocket server with all actions
+Infrastructure Operations Center v3.0.0 - Three-Pane Operations Console
+Full WebSocket-enabled server with automation engine, job queue, and timeline
 """
 
 import asyncio
@@ -18,6 +19,7 @@ import psutil
 import re
 from collections import deque
 import hashlib
+import glob  # ← ADD THIS for file pattern matching
 
 # Configuration
 HOST = '0.0.0.0'
@@ -198,19 +200,24 @@ class InfrastructureMonitor:
     
     def __init__(self):
         self.automation = AutomationEngine()
-        self.metrics_history = deque(maxlen=3600)  # 1 hour of 1-second data
-        self.events = deque(maxlen=1000)
+        # Reduced history sizes for better performance
+        self.metrics_history = deque(maxlen=720)   # 1 hour at 5s intervals
+        self.events = deque(maxlen=500)            # Last 500 events
         self.alerts = []
-        self.audit_log = deque(maxlen=10000)
-        self.timeline = deque(maxlen=500)
+        self.audit_log = deque(maxlen=1000)        # Last 1000 audit entries
+        self.timeline = deque(maxlen=200)          # Last 200 timeline events
         self.last_update = time.time()
         
         # Initialize default automations
         self._init_automations()
         
+        # Auto-clean old files on startup
+        self._clean_old_files()
+        
         # Start background tasks
         threading.Thread(target=self._collect_metrics_loop, daemon=True).start()
         threading.Thread(target=self._process_jobs_loop, daemon=True).start()
+        threading.Thread(target=self._auto_clean_loop, daemon=True).start()  # ← ADD THIS
     
     def _init_automations(self):
         """Set up default automation rules"""
@@ -235,16 +242,85 @@ class InfrastructureMonitor:
                 {"name": "Reboot VM", "type": "command", "command": "virsh reboot {target}", "on_failure": "continue"}
             ]
         )
+
+
+    def _init_automations(self):
+        """Set up default automation rules"""
+        self.automation.add_automation(
+            "Pod CrashLoop Recovery",
+            {"type": "pod_status", "condition": "CrashLoopBackOff"},
+            [
+                {"name": "Restart pod", "type": "command", "command": "kubectl delete pod {target}"},
+                {"name": "Wait for restart", "type": "sleep", "duration": 30},
+                {"name": "Check status", "type": "verify", "command": "kubectl get pod {target} -o jsonpath='{.status.phase}' | grep Running"}
+            ]
+        )
+        
+        self.automation.add_automation(
+            "VM Recovery",
+            {"type": "vm_status", "condition": "unreachable"},
+            [
+                {"name": "Ping test", "type": "command", "command": "ping -c 3 {target}"},
+                {"name": "SSH test", "type": "command", "command": "ssh -o ConnectTimeout=5 {target} echo ok"},
+                {"name": "Restart networking", "type": "command", "command": "ssh {target} 'systemctl restart networking'", "on_failure": "continue"},
+                {"name": "Wait", "type": "sleep", "duration": 10},
+                {"name": "Reboot VM", "type": "command", "command": "virsh reboot {target}", "on_failure": "continue"}
+            ]
+        )
     
+    def _clean_old_files(self, days=7):
+        """Delete log and snapshot files older than specified days"""
+        try:
+            cutoff = time.time() - (days * 86400)
+            cleaned_count = 0
+            
+            # Clean diagnostic logs
+            log_dir = "/var/log/network-events"
+            if os.path.exists(log_dir):
+                for f in glob.glob(os.path.join(log_dir, "*.log")):
+                    try:
+                        if os.path.getmtime(f) < cutoff:
+                            os.remove(f)
+                            cleaned_count += 1
+                    except:
+                        pass
+            
+            # Clean snapshot files
+            snap_dir = "/var/lib/network-recover/snapshots"
+            if os.path.exists(snap_dir):
+                for f in glob.glob(os.path.join(snap_dir, "*.log")):
+                    try:
+                        if os.path.getmtime(f) < cutoff:
+                            os.remove(f)
+                            cleaned_count += 1
+                    except:
+                        pass
+            
+            if cleaned_count > 0:
+                print(f"🧹 Auto-cleaned {cleaned_count} old files (older than {days} days)")
+                
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+    
+    def _auto_clean_loop(self):
+        """Run auto-clean every hour"""
+        while True:
+            try:
+                time.sleep(3600)  # 1 hour
+                self._clean_old_files(days=7)  # Keep 7 days
+            except:
+                time.sleep(3600)
+
     def _collect_metrics_loop(self):
-        """Continuously collect metrics every second"""
+        """Collect metrics every 5 seconds (reduced from 1s for performance)"""
         while True:
             try:
                 metrics = self.get_system_metrics()
                 self.metrics_history.append(metrics)
                 self.last_update = time.time()
-                time.sleep(1)
-            except:
+                time.sleep(5)  # 5 second interval = 12 samples/minute
+            except Exception as e:
+                print(f"Metrics collection error: {e}")
                 time.sleep(5)
     
     def _process_jobs_loop(self):
@@ -345,15 +421,30 @@ class InfrastructureMonitor:
         minutes = int((uptime_seconds % 3600) // 60)
         return f"{days}d {hours}h {minutes}m"
     
-    # ---- VM Management (Universal Detection) ----
+
         
-    def get_vms_list(self):
-        """Universal VM detection - works with any hypervisor, cloud, or environment"""
+    # ---- VM Management (Universal Detection with Aggressive Caching) ----
+
+    def get_vms_list(self, force_refresh=False):
+        """
+        Universal VM detection with aggressive caching.
+        Designed for low-resource devices (1GB RAM).
+        Cache TTL: 60 seconds to minimize subprocess calls.
+        """
+        
+        # Cache for 60 seconds (longer = less CPU usage)
+        cache_ttl = 60  # seconds
+        
+        # Check if we have a valid cache
+        if hasattr(self, '_vms_cache') and not force_refresh:
+            cache_age = time.time() - getattr(self, '_vms_cache_time', 0)
+            if cache_age < cache_ttl:
+                return self._vms_cache  # Silent return - no logging spam
+        
         vms = []
-        detected_methods = []
         seen_names = set()
         
-        # Define known VMs to avoid duplicates
+        # Define known VMs
         known_vm_names = ['k8s-node-01', 'k8s-node-02', 'k8s-node-03']
         known_vm_ips = {
             'k8s-node-01': '10.0.0.21',
@@ -362,11 +453,11 @@ class InfrastructureMonitor:
         }
         
         # ------------------------------------------------------------------
-        # METHOD 1: libvirt / KVM / QEMU (virsh)
+        # METHOD 1: libvirt / KVM / QEMU (virsh) - Quick check only
         # ------------------------------------------------------------------
         try:
             result = subprocess.run(['virsh', 'list', '--all'], 
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, text=True, timeout=3)
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')[2:]
                 for line in lines:
@@ -380,69 +471,65 @@ class InfrastructureMonitor:
                                 vms.append({
                                     'name': vm_name,
                                     'state': vm_state,
-                                    'ip': self._get_vm_ip(vm_name),
+                                    'ip': 'unknown',
                                     'hypervisor': 'libvirt',
                                     'id': parts[0] if parts[0] != '-' else None,
-                                    'cpu': self._get_vm_cpu(vm_name),
-                                    'ram': self._get_vm_ram(vm_name),
-                                    'disk': self._get_vm_disk(vm_name)
+                                    'cpu': '0%',
+                                    'ram': '0%',
+                                    'disk': '0%'
                                 })
-                    if vms:
-                        detected_methods.append('libvirt')
-        except Exception as e:
-            print(f"libvirt detection: {e}")
+        except Exception:
+            pass  # Silently skip errors
         
         # ------------------------------------------------------------------
-        # METHOD 2: QEMU Processes (skip known VMs to avoid duplicates)
+        # METHOD 2: QEMU Processes (only if no VMs found)
         # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "ps aux | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for name in result.stdout.strip().split('\n'):
-                    name = name.strip().rstrip(',')
-                    # Skip known VMs - they'll be added by the fallback
-                    if name in known_vm_names:
-                        continue
-                    if name and name not in seen_names:
-                        seen_names.add(name)
-                        vms.append({
-                            'name': name,
-                            'state': 'running',
-                            'ip': self._get_vm_ip(name),
-                            'hypervisor': 'qemu',
-                            'id': None,
-                            'cpu': '0%',
-                            'ram': '0%',
-                            'disk': '0%'
-                        })
-                    detected_methods.append('qemu')
-        except Exception as e:
-            print(f"QEMU detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 3: Docker Containers (node-like containers)
-        # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for line in result.stdout.strip().split('\n'):
-                    if '|' in line:
-                        name, status, image = line.split('|', 2)
-                        # Skip if it matches a known VM name
+        if len(vms) == 0:
+            try:
+                result = subprocess.run(
+                    "ps aux 2>/dev/null | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' | head -5",
+                    shell=True, capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for name in result.stdout.strip().split('\n'):
+                        name = name.strip().rstrip(',')
                         if name in known_vm_names:
                             continue
-                        if any(keyword in name.lower() for keyword in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master', 'control']):
+                        if name and name not in seen_names:
+                            seen_names.add(name)
+                            vms.append({
+                                'name': name,
+                                'state': 'running',
+                                'ip': 'unknown',
+                                'hypervisor': 'qemu',
+                                'id': None,
+                                'cpu': '0%',
+                                'ram': '0%',
+                                'disk': '0%'
+                            })
+            except Exception:
+                pass
+        
+        # ------------------------------------------------------------------
+        # METHOD 3: Docker Containers (only if no VMs found)
+        # ------------------------------------------------------------------
+        if len(vms) == 0:
+            try:
+                result = subprocess.run(
+                    "docker ps -a --format '{{.Names}}' 2>/dev/null | head -10",
+                    shell=True, capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for name in result.stdout.strip().split('\n'):
+                        name = name.strip()
+                        if name in known_vm_names:
+                            continue
+                        if any(kw in name.lower() for kw in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master']):
                             if name not in seen_names:
                                 seen_names.add(name)
                                 vms.append({
                                     'name': name,
-                                    'state': 'running' if 'Up' in status else 'exited',
+                                    'state': 'running',
                                     'ip': 'container',
                                     'hypervisor': 'docker',
                                     'id': None,
@@ -450,32 +537,28 @@ class InfrastructureMonitor:
                                     'ram': '0%',
                                     'disk': '0%'
                                 })
-                    if vms:
-                        detected_methods.append('docker')
-        except Exception as e:
-            print(f"Docker detection: {e}")
+            except Exception:
+                pass
         
         # ------------------------------------------------------------------
-        # METHOD 4: LXC / LXD Containers
+        # METHOD 4: LXC / LXD Containers (only if no VMs found)
         # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "lxc list --format csv -c n,s 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for line in result.stdout.strip().split('\n'):
-                    if ',' in line:
-                        name, status = line.split(',', 1)
+        if len(vms) == 0:
+            try:
+                result = subprocess.run(
+                    "lxc list --format csv -c n 2>/dev/null | head -10",
+                    shell=True, capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for name in result.stdout.strip().split('\n'):
                         name = name.strip()
-                        # Skip if it matches a known VM name
                         if name in known_vm_names:
                             continue
                         if name and name not in seen_names:
                             seen_names.add(name)
                             vms.append({
                                 'name': name,
-                                'state': status.strip(),
+                                'state': 'running',
                                 'ip': 'lxc',
                                 'hypervisor': 'lxc',
                                 'id': None,
@@ -483,122 +566,21 @@ class InfrastructureMonitor:
                                 'ram': '0%',
                                 'disk': '0%'
                             })
-                    if vms:
-                        detected_methods.append('lxc')
-        except Exception as e:
-            print(f"LXC detection: {e}")
+            except Exception:
+                pass
         
         # ------------------------------------------------------------------
-        # METHOD 5: AWS EC2 (via metadata)
-        # ------------------------------------------------------------------
-        try:
-            # Check if running on AWS
-            result = subprocess.run(
-                "curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=3
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                instance_id = result.stdout.strip()
-                # Get instance name from tags or use instance-id
-                name_result = subprocess.run(
-                    "curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/tags/instance/Name 2>/dev/null",
-                    shell=True, capture_output=True, text=True, timeout=3
-                )
-                vm_name = name_result.stdout.strip() if name_result.stdout.strip() else instance_id
-                if vm_name not in seen_names:
-                    seen_names.add(vm_name)
-                    vms.append({
-                        'name': vm_name,
-                        'state': 'running',
-                        'ip': 'aws',
-                        'hypervisor': 'aws',
-                        'id': instance_id,
-                        'cpu': '0%',
-                        'ram': '0%',
-                        'disk': '0%'
-                    })
-                    detected_methods.append('aws')
-        except Exception as e:
-            print(f"AWS detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 6: Azure (via metadata)
-        # ------------------------------------------------------------------
-        try:
-            # Check if running on Azure
-            result = subprocess.run(
-                "curl -s --connect-timeout 2 -H Metadata:true 'http://169.254.169.254/metadata/instance/compute/name?api-version=2021-02-01&format=text' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=3
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                vm_name = result.stdout.strip()
-                # Get VM ID
-                id_result = subprocess.run(
-                    "curl -s --connect-timeout 2 -H Metadata:true 'http://169.254.169.254/metadata/instance/compute/vmId?api-version=2021-02-01&format=text' 2>/dev/null",
-                    shell=True, capture_output=True, text=True, timeout=3
-                )
-                vm_id = id_result.stdout.strip() if id_result.stdout.strip() else 'azure-vm'
-                if vm_name not in seen_names:
-                    seen_names.add(vm_name)
-                    vms.append({
-                        'name': vm_name,
-                        'state': 'running',
-                        'ip': 'azure',
-                        'hypervisor': 'azure',
-                        'id': vm_id,
-                        'cpu': '0%',
-                        'ram': '0%',
-                        'disk': '0%'
-                    })
-                    detected_methods.append('azure')
-        except Exception as e:
-            print(f"Azure detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 7: GCP (via metadata)
-        # ------------------------------------------------------------------
-        try:
-            # Check if running on GCP
-            result = subprocess.run(
-                "curl -s --connect-timeout 2 -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/name' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=3
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                vm_name = result.stdout.strip()
-                # Get VM ID
-                id_result = subprocess.run(
-                    "curl -s --connect-timeout 2 -H 'Metadata-Flavor: Google' 'http://169.254.169.254/computeMetadata/v1/instance/id' 2>/dev/null",
-                    shell=True, capture_output=True, text=True, timeout=3
-                )
-                vm_id = id_result.stdout.strip() if id_result.stdout.strip() else 'gcp-vm'
-                if vm_name not in seen_names:
-                    seen_names.add(vm_name)
-                    vms.append({
-                        'name': vm_name,
-                        'state': 'running',
-                        'ip': 'gcp',
-                        'hypervisor': 'gcp',
-                        'id': vm_id,
-                        'cpu': '0%',
-                        'ram': '0%',
-                        'disk': '0%'
-                    })
-                    detected_methods.append('gcp')
-        except Exception as e:
-            print(f"GCP detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 8: Known VMs (ALWAYS included as fallback)
+        # METHOD 5: Known VMs (ALWAYS included)
         # ------------------------------------------------------------------
         for ip, name in known_vm_ips.items():
             if name not in seen_names:
                 seen_names.add(name)
-                # Check if reachable via ping
+                # Quick ping with 1 second timeout
                 reachable = False
                 try:
                     result = subprocess.run(
-                        f"ping -c 1 -W 1 {ip} 2>/dev/null",
-                        shell=True, capture_output=True, text=True, timeout=2
+                        f"ping -c 1 -W 1 {ip} >/dev/null 2>&1",
+                        shell=True, timeout=1
                     )
                     reachable = result.returncode == 0
                 except:
@@ -615,12 +597,17 @@ class InfrastructureMonitor:
                     'disk': '0%'
                 })
         
-        detected_methods.append('known_vms')
+        # Cache the results
+        self._vms_cache = vms
+        self._vms_cache_time = time.time()
         
-        # ------------------------------------------------------------------
-        # Log detection summary
-        # ------------------------------------------------------------------
-        print(f"VM detection methods: {', '.join(set(detected_methods))} | Total VMs: {len(vms)}")
+        # Single log line with method count (not every time)
+        if not hasattr(self, '_vms_log_count'):
+            self._vms_log_count = 0
+        
+        self._vms_log_count += 1
+        if self._vms_log_count % 5 == 1:  # Log every 5th cache refresh
+            print(f"VM detection: {len(vms)} VMs cached ({cache_ttl}s TTL)")
         
         return vms
     
