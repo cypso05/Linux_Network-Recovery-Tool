@@ -719,6 +719,10 @@
                     <li class="tree-item" onclick="selectResource('k8s-jobs')">
                         <span class="tree-icon">⏱</span> Jobs
                     </li>
+                    <li class="tree-item" onclick="selectResource('network')">
+                        <span class="tree-icon">🌐</span> Network
+                        <span class="tree-status" id="network-status"></span>
+                    </li>
                 </ul>
             </div>
             <div class="sidebar-section">
@@ -841,85 +845,176 @@
                 state.connected = false;
             };
         }
-        
+
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+                
         function sendCommand(command, params = {}) {
             if (state.ws && state.ws.readyState === WebSocket.OPEN) {
                 state.ws.send(JSON.stringify({ command, params, request_id: Date.now().toString(36) }));
             }
         }
         
-        function handleMessage(data) {
-            state.lastUpdate = Date.now();
-            
-            switch(data.type) {
-                case 'connected':
-                    console.log('Server connected:', data.data);
-                    break;
-                case 'metrics_update':
-                    state.metrics = data.data;
-                    updateMetricsDisplay(data.data);
-                    updateStatusBar();
-                    break;
-                case 'events_update':
-                    state.events = data.data;
-                    if (state.currentView === 'events') renderEvents();
-                    break;
-                case 'get_metrics_response':
-                    state.metrics = data.data;
-                    updateMetricsDisplay(data.data);
-                    break;
-                case 'get_vms_response':
-                    state.vms = data.data;
-                    if (state.currentView === 'vms') renderVMList();
-                    updateSidebarCounts();
-                    updateStatusBar();
-                    break;
-                case 'get_kubernetes_response':
-                    state.kubernetes = data.data;
-                    if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
-                    updateSidebarCounts();
-                    updateStatusBar();
-                    break;
-                case 'get_events_response':
-                    state.events = data.data;
-                    if (state.currentView === 'events') renderEvents();
-                    break;
-                case 'get_timeline_response':
-                    if (state.currentView === 'timeline') renderTimeline(data.data);
-                    break;
-                case 'get_alerts_response':
-                    state.alerts = data.data;
-                    updateAlertBell();
-                    break;
-                case 'get_problems_response':
-                    if (state.currentView === 'problems') renderProblems(data.data);
-                    break;
-                case 'get_vm_details_response':
-                    if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
-                        renderVMDrawerDetails(data.data);
-                        state._pendingDrawer = null;
+       function handleMessage(data) {
+        state.lastUpdate = Date.now();
+        
+        switch(data.type) {
+            case 'connected':
+                console.log('Server connected:', data.data);
+                break;
+                
+            case 'metrics_update':
+                state.metrics = data.data;
+                updateMetricsDisplay(data.data);
+                updateStatusBar();
+                break;
+                
+            case 'events_update':
+                state.events = data.data;
+                if (state.currentView === 'events') renderEvents();
+                break;
+                
+            case 'get_metrics_response':
+                state.metrics = data.data;
+                updateMetricsDisplay(data.data);
+                break;
+                
+            case 'get_vms_response':
+                state.vms = data.data;
+                if (state.currentView === 'vms') renderVMList();
+                updateSidebarCounts();
+                updateStatusBar();
+                break;
+                
+            case 'get_kubernetes_response':
+                state.kubernetes = data.data;
+                if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                updateSidebarCounts();
+                updateStatusBar();
+                break;
+                
+            case 'get_events_response':
+                state.events = data.data;
+                if (state.currentView === 'events') renderEvents();
+                break;
+                
+            case 'get_timeline_response':
+                if (state.currentView === 'timeline') renderTimeline(data.data);
+                break;
+                
+            case 'get_alerts_response':
+                state.alerts = data.data;
+                updateAlertBell();
+                break;
+                
+            case 'get_problems_response':
+                if (state.currentView === 'problems') renderProblems(data.data);
+                break;
+                
+            case 'get_vm_details_response':
+                if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
+                    renderVMDrawerDetails(data.data);
+                    state._pendingDrawer = null;
+                }
+                break;
+                
+            case 'run_diagnostics_response':
+                showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
+                // Display in network view if visible
+                if (state.currentView === 'network') {
+                    const output = document.getElementById('network-output');
+                    if (output) {
+                        const lines = (data.data.output || '').split('\n');
+                        output.innerHTML = lines.map(line => {
+                            let color = '#8890b0';
+                            if (line.includes('✅') || line.includes('PASS')) color = '#4caf50';
+                            else if (line.includes('❌') || line.includes('FAIL')) color = '#f44336';
+                            else if (line.includes('⚠') || line.includes('WARN')) color = '#ff9800';
+                            else if (line.includes('LAYER')) color = '#64b5f6';
+                            return `<div style="color:${color};${line.includes('LAYER') ? 'font-weight:bold;margin-top:4px;' : ''}">${escapeHtml(line)}</div>`;
+                        }).join('');
+                        updateNetworkLayers(lines);
                     }
-                    break;
-                case 'run_diagnostics_response':
-                    showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
-                    break;
-                case 'run_repair_response':
-                    showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
-                    break;
-                case 'execute_action_response':
-                    if (data.data) {
-                        showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
-                        refreshAll();
+                }
+                break;
+                
+            case 'run_repair_response':
+                showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
+                // Display in network view if visible
+                if (state.currentView === 'network') {
+                    const output = document.getElementById('network-output');
+                    if (output) {
+                        const lines = (data.data.output || '').split('\n');
+                        output.innerHTML = lines.map(line => {
+                            let color = '#8890b0';
+                            if (line.includes('✅') || line.includes('PASS')) color = '#4caf50';
+                            else if (line.includes('❌') || line.includes('FAIL')) color = '#f44336';
+                            else if (line.includes('⚠') || line.includes('WARN')) color = '#ff9800';
+                            else if (line.includes('REPAIR')) color = '#64b5f6';
+                            return `<div style="color:${color};${line.includes('REPAIR') ? 'font-weight:bold;margin-top:4px;' : ''}">${escapeHtml(line)}</div>`;
+                        }).join('');
                     }
-                    break;
-                case 'search_response':
-                    renderSearchResults(data.data);
-                    break;
-                case 'get_job_status_response':
-                    // handled elsewhere
-                    break;
-            }
+                }
+                break;
+                
+            case 'execute_action_response':
+                if (data.data) {
+                    showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
+                    refreshAll();
+                }
+                break;
+                
+            case 'search_response':
+                renderSearchResults(data.data);
+                break;
+                
+            case 'get_job_status_response':
+                // handled elsewhere
+                break;
         }
+    }
+        function renderNetworkView() {
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">
+                    🌐 Network Diagnostics
+                    <div>
+                        <button class="btn btn-primary" onclick="runNetworkDiagnose()" style="font-size:11px;padding:4px 12px;">🔍 Diagnose</button>
+                        <button class="btn btn-success" onclick="runNetworkRepair()" style="font-size:11px;padding:4px 12px;">🔧 Repair</button>
+                        <button class="btn" onclick="runNetworkStatus()" style="font-size:11px;padding:4px 12px;">📊 Status</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="network-output" style="max-height:600px;overflow-y:auto;font-family:'SF Mono',Consolas,monospace;font-size:13px;line-height:1.6;background:#0a0e27;border-radius:4px;padding:12px;">
+                    <div style="color:#6a7090;text-align:center;padding:40px;">
+                        <div style="font-size:48px;margin-bottom:16px;">🌐</div>
+                        <div>Click <strong>Diagnose</strong> to run network diagnostics</div>
+                        <div style="font-size:12px;color:#4a4a6a;margin-top:8px;">Shows all 11 layers: Physical → Link → IP → Routing → Gateway → Internet → DNS → HTTPS → NetworkManager → Virtualization → Kubernetes</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Layer Status Indicators -->
+            <div class="panel" style="margin-top:12px;">
+                <div class="panel-header">Layer Status</div>
+                <div class="panel-body">
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;" id="layer-indicators">
+                        ${['Physical','Link','IP','Routing','Gateway','Internet','DNS','HTTPS','NetworkManager','Virtualization','Kubernetes'].map((layer, i) => `
+                            <span class="layer-indicator" id="layer-${i}" style="padding:4px 12px;border-radius:12px;font-size:11px;background:rgba(255,255,255,0.05);color:#666;border:1px solid transparent;transition:all 0.3s;">
+                                ${layer}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
         
         // ============================================================
         // SIDEBAR TREE
@@ -930,32 +1025,61 @@
         }
         
         function selectResource(type) {
-            state.selectedResource = type;
-            state.currentView = type;
-            
-            // Update active state
-            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
-            const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
-            if (activeItem) activeItem.classList.add('active');
-            
-            // Load content
-            switch(type) {
-                case 'host': renderHostView(); break;
-                case 'vms': renderVMList(); break;
-                case 'k8s-nodes': renderK8sView('k8s-nodes'); break;
-                case 'k8s-pods': renderK8sView('k8s-pods'); break;
-                case 'k8s-deployments': renderK8sView('k8s-deployments'); break;
-                case 'k8s-services': renderK8sView('k8s-services'); break;
-                case 'k8s-jobs': renderK8sView('k8s-jobs'); break;
-                case 'problems': renderProblems(); break;
-                case 'jobs': renderJobQueue(); break;
-                case 'automation': renderAutomations(); break;
-                case 'timeline': renderTimeline(); break;
-                case 'events': renderEvents(); break;
-                default: renderOverview(); break;
-            }
-        }
+        state.selectedResource = type;
+        state.currentView = type;
         
+        // Update active state
+        document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
+        const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
+        if (activeItem) activeItem.classList.add('active');
+        
+        // Load content
+        switch(type) {
+            case 'host': 
+                renderHostView(); 
+                break;
+            case 'vms': 
+                renderVMList(); 
+                break;
+            case 'network': 
+                renderNetworkView(); 
+                break;
+            case 'k8s-nodes': 
+                renderK8sView('k8s-nodes'); 
+                break;
+            case 'k8s-pods': 
+                renderK8sView('k8s-pods'); 
+                break;
+            case 'k8s-deployments': 
+                renderK8sView('k8s-deployments'); 
+                break;
+            case 'k8s-services': 
+                renderK8sView('k8s-services'); 
+                break;
+            case 'k8s-jobs': 
+                renderK8sView('k8s-jobs'); 
+                break;
+            case 'problems': 
+                renderProblems(); 
+                break;
+            case 'jobs': 
+                renderJobQueue(); 
+                break;
+            case 'automation': 
+                renderAutomations(); 
+                break;
+            case 'timeline': 
+                renderTimeline(); 
+                break;
+            case 'events': 
+                renderEvents(); 
+                break;
+            default: 
+                renderOverview(); 
+                break;
+        }
+    }
+            
         // ============================================================
         // VIEW RENDERERS
         // ============================================================
@@ -1527,7 +1651,96 @@
                 showNotification('Emergency', 'Emergency mode activated', 'warning');
             }
         }
-        
+        // ============================================================
+        // NETWORK RECOVERY ACTIONS
+        // ============================================================
+
+        function runNetworkDiagnose() {
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#40c4ff;">🔍 Running diagnostics...</div>';
+            
+            // Reset layer indicators
+            document.querySelectorAll('.layer-indicator').forEach(el => {
+                el.style.background = 'rgba(255,255,255,0.05)';
+                el.style.color = '#666';
+                el.style.borderColor = 'transparent';
+            });
+            
+            sendCommand('run_diagnostics');
+            // The response will be handled by handleMessage
+            // We need to display it in the network view
+        }
+
+        function runNetworkRepair() {
+            if (!confirm('⚠️ This will attempt to repair network issues. Continue?')) return;
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#ffc107;">🔧 Running repair...</div>';
+            sendCommand('run_repair');
+        }
+
+        function runNetworkStatus() {
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#40c4ff;">📊 Getting network status...</div>';
+            // Use the network-recover status command via API
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    output.innerHTML = `
+                        <div style="color:#4caf50;">✅ Network Status</div>
+                        <div style="color:#8890b0;font-size:12px;margin-top:8px;">
+                            <div>Host: ${data.host || 'unknown'}</div>
+                            <div>VMs Running: ${data.vms_running || 0}</div>
+                            <div>K8s Available: ${data.k8s_available ? '✅' : '❌'}</div>
+                            <div>Uptime: ${data.uptime || 'N/A'}</div>
+                        </div>
+                        <div style="margin-top:12px;color:#6a7090;font-size:11px;">${new Date(data.timestamp).toLocaleString()}</div>
+                    `;
+                })
+                .catch(() => {
+                    output.innerHTML = '<div style="color:#f44336;">❌ Failed to get status</div>';
+                });
+        }
+
+        function updateNetworkLayers(lines) {
+            const layerMap = {
+                'LAYER 1': 0, 'LAYER 2': 1, 'LAYER 3': 2, 'LAYER 4': 3,
+                'LAYER 5': 4, 'LAYER 6': 5, 'LAYER 7': 6, 'LAYER 8': 7,
+                'LAYER 9': 8, 'LAYER 10': 9, 'LAYER 11': 10
+            };
+            
+            let currentLayer = -1;
+            lines.forEach(line => {
+                for (const [key, index] of Object.entries(layerMap)) {
+                    if (line.includes(key)) {
+                        currentLayer = index;
+                        const el = document.getElementById(`layer-${index}`);
+                        if (el) {
+                            el.style.background = 'rgba(100, 181, 246, 0.15)';
+                            el.style.color = '#64b5f6';
+                            el.style.borderColor = '#64b5f6';
+                        }
+                    }
+                }
+                if (currentLayer >= 0) {
+                    const el = document.getElementById(`layer-${currentLayer}`);
+                    if (el) {
+                        if (line.includes('✅') || line.includes('PASS')) {
+                            el.style.background = 'rgba(76, 175, 80, 0.2)';
+                            el.style.color = '#4caf50';
+                            el.style.borderColor = '#4caf50';
+                        } else if (line.includes('❌') || line.includes('FAIL')) {
+                            el.style.background = 'rgba(244, 67, 54, 0.2)';
+                            el.style.color = '#f44336';
+                            el.style.borderColor = '#f44336';
+                        } else if (line.includes('⚠') || line.includes('WARN')) {
+                            el.style.background = 'rgba(255, 152, 0, 0.2)';
+                            el.style.color = '#ff9800';
+                            el.style.borderColor = '#ff9800';
+                        }
+                    }
+                }
+            });
+        }
         // ============================================================
         // SEARCH
         // ============================================================
