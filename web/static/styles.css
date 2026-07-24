@@ -39,6 +39,7 @@ header {
 .logo h1 {
     font-size: 24px;
     background: linear-gradient(135deg, #00d4ff, #7b2ffc);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     font-weight: 700;
@@ -72,6 +73,9 @@ header {
     box-shadow: 0 0 20px rgba(255, 23, 68, 0.3);
 }
 
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
 nav {
     display: flex;
     gap: 10px;
@@ -142,6 +146,18 @@ nav {
     box-shadow: 0 8px 25px rgba(211, 47, 47, 0.4);
 }
 
+.btn-dashboard {
+    background: linear-gradient(135deg, #4a148c, #6a1b9a);
+}
+
+.btn-dashboard:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(106, 27, 154, 0.4);
+}
+
+/* ============================================================
+   LAYERS
+   ============================================================ */
 .layers {
     display: flex;
     gap: 6px;
@@ -183,6 +199,9 @@ nav {
     color: #ffc107;
 }
 
+/* ============================================================
+   OUTPUT
+   ============================================================ */
 .output {
     background: rgba(0,0,0,0.4);
     border-radius: 12px;
@@ -233,6 +252,9 @@ nav {
     to { opacity: 1; transform: translateY(0); }
 }
 
+/* ============================================================
+   PROGRESS
+   ============================================================ */
 .progress-container {
     display: flex;
     align-items: center;
@@ -265,6 +287,120 @@ nav {
     text-align: right;
 }
 
+/* ============================================================
+   DASHBOARD TAB
+   ============================================================ */
+#dashboard {
+    display: none;
+    background: rgba(0,0,0,0.2);
+    border-radius: 12px;
+    padding: 24px;
+    min-height: 400px;
+}
+
+#dashboard h2 {
+    color: #00d4ff;
+    margin-bottom: 20px;
+    font-size: 22px;
+}
+
+.dashboard-section {
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.dashboard-section h3 {
+    color: #7ec8e3;
+    margin-bottom: 12px;
+    font-size: 16px;
+}
+
+.dashboard-section.vm-section {
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid #4a148c;
+}
+
+.dashboard-section.k3s-section {
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid #ff6f00;
+}
+
+/* Resource Bars */
+.resource-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 6px 0;
+}
+
+.resource-label {
+    min-width: 70px;
+    font-size: 0.85em;
+    color: #aaa;
+}
+
+.resource-bar {
+    flex: 1;
+    height: 18px;
+    background: #2a2a2a;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.resource-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4CAF50, #FFC107, #f44336);
+    background-size: 200% 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.resource-value {
+    min-width: 130px;
+    font-size: 0.85em;
+    text-align: right;
+    color: #ccc;
+}
+
+/* K3s Table */
+.k3s-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 0.85em;
+}
+
+.k3s-table th {
+    text-align: left;
+    color: #888;
+    font-size: 0.8em;
+    padding: 6px 10px;
+    border-bottom: 1px solid #333;
+}
+
+.k3s-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #222;
+    color: #ccc;
+}
+
+.k3s-table tr:hover td {
+    background: rgba(255,255,255,0.03);
+}
+
+.k3s-table .status-ready {
+    color: #00e676;
+}
+
+.k3s-table .status-not-ready {
+    color: #ff1744;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
 footer {
     display: flex;
     justify-content: space-between;
@@ -279,6 +415,9 @@ footer {
     color: #00e676;
 }
 
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
 @media (max-width: 768px) {
     header {
         flex-direction: column;
@@ -302,5 +441,33 @@ footer {
     .layer {
         font-size: 9px;
         padding: 4px 10px;
+    }
+
+    .resource-row {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .resource-label {
+        min-width: 60px;
+        font-size: 0.8em;
+    }
+
+    .resource-value {
+        min-width: 100px;
+        font-size: 0.8em;
+    }
+
+    #dashboard {
+        padding: 12px;
+    }
+
+    .k3s-table {
+        font-size: 0.75em;
+    }
+
+    .k3s-table th,
+    .k3s-table td {
+        padding: 4px 6px;
     }
 }
