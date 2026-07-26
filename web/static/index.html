@@ -6,7 +6,7 @@
     <title>Infrastructure Operations Center</title>
     <style>
         :root {
-            --bg-primary: #0a0e27;
+            --bg-primary: #d3d3d7;
             --bg-secondary: #0d1130;
             --bg-tertiary: #151a3a;
             --bg-hover: #1a1f3a;
@@ -886,6 +886,20 @@
         switch(data.type) {
             case 'connected':
                 console.log('Server connected:', data.data);
+                // Fetch initial data after connection
+                setTimeout(() => {
+                    sendCommand('get_metrics');
+                    sendCommand('get_vms');
+                    sendCommand('get_kubernetes');
+                    sendCommand('get_events');
+                    sendCommand('get_alerts');
+                }, 500);
+                // Render overview once data arrives
+                setTimeout(() => {
+                    if (!state.currentView || state.currentView === 'overview') {
+                        renderOverview();
+                    }
+                }, 1500);
                 break;
                 
             case 'metrics_update':
@@ -902,25 +916,31 @@
             case 'get_metrics_response':
                 state.metrics = data.data;
                 updateMetricsDisplay(data.data);
+                // Re-render if we're on overview or host view
+                if (state.currentView === 'host') renderHostView();
+                if (!state.currentView || state.currentView === 'overview') renderOverview();
                 break;
                 
             case 'get_vms_response':
-                state.vms = data.data;
+                state.vms = data.data || [];
                 if (state.currentView === 'vms') renderVMList();
+                if (!state.currentView || state.currentView === 'overview') renderOverview();
                 updateSidebarCounts();
                 updateStatusBar();
                 break;
                 
             case 'get_kubernetes_response':
-                state.kubernetes = data.data;
-                if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                state.kubernetes = data.data || {};
+                if (state.currentView && state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                if (!state.currentView || state.currentView === 'overview') renderOverview();
                 updateSidebarCounts();
                 updateStatusBar();
                 break;
                 
             case 'get_events_response':
-                state.events = data.data;
+                state.events = data.data || [];
                 if (state.currentView === 'events') renderEvents();
+                if (!state.currentView || state.currentView === 'overview') renderOverview();
                 break;
                 
             case 'get_timeline_response':
@@ -928,18 +948,57 @@
                 break;
                 
             case 'get_alerts_response':
-                state.alerts = data.data;
+                state.alerts = data.data || [];
                 updateAlertBell();
+                updateSidebarCounts();
                 break;
                 
             case 'get_problems_response':
                 if (state.currentView === 'problems') renderProblems(data.data);
+                updateSidebarCounts();
                 break;
                 
             case 'get_vm_details_response':
                 if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
                     renderVMDrawerDetails(data.data);
                     state._pendingDrawer = null;
+                }
+                break;
+                
+            case 'get_audit_log_response':
+                // Handle audit log display
+                const auditContent = document.getElementById('audit-content');
+                if (auditContent) {
+                    const logs = data.data || [];
+                    if (logs.length > 0) {
+                        auditContent.innerHTML = logs.map(entry => `
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(entry.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${entry.action === 'delete' || entry.action === 'shutdown' ? 'error' : 'success'}">${entry.action === 'delete' || entry.action === 'shutdown' ? '✗' : '✓'}</span>
+                                <div>
+                                    <div style="font-weight:500;">${entry.user || 'system'} - ${entry.action}</div>
+                                    <div style="font-size:11px;color:#8890b0;">${entry.resource || ''}</div>
+                                </div>
+                            </div>
+                        `).join('');
+                    } else {
+                        auditContent.innerHTML = '<div style="color:#6a7090;padding:20px;text-align:center;">No audit entries found</div>';
+                    }
+                }
+                break;
+                
+            case 'get_job_status_response':
+                // Update job queue if visible
+                if (state.currentView === 'jobs') {
+                    fetch('/api/jobs')
+                        .then(r => r.json())
+                        .then(jobData => {
+                            const container = document.getElementById('job-queue-content');
+                            if (container) {
+                                renderJobQueueContent(container, jobData);
+                            }
+                        })
+                        .catch(() => {});
                 }
                 break;
                 
@@ -993,12 +1052,14 @@
                 renderSearchResults(data.data);
                 break;
                 
-            case 'get_job_status_response':
-                // handled elsewhere
+            case 'error':
+                console.error('Server error:', data.message);
+                showNotification('Error', data.message, 'error');
                 break;
         }
     }
-        function renderNetworkView() {
+
+    function renderNetworkView() {
         document.getElementById('content-area').innerHTML = `
             <div class="panel">
                 <div class="panel-header">
@@ -2005,16 +2066,43 @@
         // ACTIONS - FIXED WITH PROPER FEEDBACK
         // ============================================================
 
-        function refreshAll() {
-            showNotification('Refresh', 'Refreshing all data...', 'info');
-            sendCommand('get_metrics');
-            sendCommand('get_vms');
-            sendCommand('get_kubernetes');
-            sendCommand('get_events');
-            sendCommand('get_alerts');
-            sendCommand('get_problems');
-            showNotification('Refresh', '✅ Data refreshed', 'success');
-        }
+       function refreshAll() {
+        showNotification('Refresh', 'Refreshing all data...', 'info');
+        sendCommand('get_metrics');
+        sendCommand('get_vms');
+        sendCommand('get_kubernetes');
+        sendCommand('get_events');
+        sendCommand('get_alerts');
+        sendCommand('get_problems');
+        
+        // Re-render current view after data arrives
+        setTimeout(() => {
+            switch(state.currentView) {
+                case 'host': renderHostView(); break;
+                case 'vms': renderVMList(); break;
+                case 'network': renderNetworkView(); break;
+                case 'k8s-nodes': 
+                case 'k8s-pods': 
+                case 'k8s-deployments': 
+                case 'k8s-services': 
+                case 'k8s-jobs': 
+                    renderK8sView(state.currentView); 
+                    break;
+                case 'problems': 
+                    sendCommand('get_problems');
+                    break;
+                case 'jobs': renderJobQueue(); break;
+                case 'events': renderEvents(); break;
+                case 'timeline': 
+                    sendCommand('get_timeline', { hours: 1 });
+                    break;
+                case 'automation': renderAutomations(); break;
+                default: renderOverview(); break;
+            }
+        }, 1500);
+        
+        showNotification('Refresh', '✅ Data refreshed', 'success');
+    }
 
        function runDiagnostics() {
         // Show what we're diagnosing
@@ -2664,21 +2752,34 @@
         // ============================================================
         // INITIALIZATION
         // ============================================================
-        function init() {
-            connectWebSocket();
-            renderOverview();
-            
-            // Periodic refresh
-            setInterval(() => {
-                if (state.connected) {
-                    sendCommand('get_metrics');
-                    sendCommand('get_vms');
-                    sendCommand('get_kubernetes');
-                    sendCommand('get_events');
-                    sendCommand('get_alerts');
-                }
-            }, 5000);
-        }
+       function init() {
+        // Show loading state immediately
+        document.getElementById('content-area').innerHTML = `
+            <div style="text-align:center;padding:60px;color:#6a7090;">
+                <div style="font-size:48px;margin-bottom:16px;">⚡</div>
+                <div style="font-size:16px;margin-bottom:8px;">Infrastructure Operations Center</div>
+                <div style="font-size:12px;">Connecting to server...</div>
+                <div style="margin-top:16px;">
+                    <div style="display:inline-block;width:8px;height:8px;background:#64b5f6;border-radius:50%;animation:pulse 1.5s infinite;"></div>
+                    <div style="display:inline-block;width:8px;height:8px;background:#64b5f6;border-radius:50%;animation:pulse 1.5s 0.3s infinite;margin-left:8px;"></div>
+                    <div style="display:inline-block;width:8px;height:8px;background:#64b5f6;border-radius:50%;animation:pulse 1.5s 0.6s infinite;margin-left:8px;"></div>
+                </div>
+            </div>
+        `;
+        
+        connectWebSocket();
+        
+        // Periodic refresh
+        setInterval(() => {
+            if (state.connected) {
+                sendCommand('get_metrics');
+                sendCommand('get_vms');
+                sendCommand('get_kubernetes');
+                sendCommand('get_events');
+                sendCommand('get_alerts');
+            }
+        }, 5000);
+    }
         
         // Start the application
         document.addEventListener('DOMContentLoaded', init);
