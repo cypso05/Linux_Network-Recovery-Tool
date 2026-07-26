@@ -1395,7 +1395,7 @@
     // ============================================================
     // VIEW RENDERERS
     // ============================================================
-    function renderOverview() {
+        function renderOverview() {
         const m = state.metrics;
         const vms = state.vms || [];
         const k8s = state.kubernetes || { nodes: [], pods: [] };
@@ -1404,9 +1404,9 @@
         const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
         
         document.getElementById('content-area').innerHTML = `
-            <!-- Health Status -->
-            <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
-                <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">🟢 Infrastructure Healthy</h2>
+            <!-- Health Status - Blue theme matching header -->
+            <div style="background: linear-gradient(135deg, #e8f0fe, #d2e3fc); border: 1px solid #a8c8f0; padding: 20px; border-radius: 10px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(59, 109, 240, 0.06);">
+                <h2 style="color: #1a3a6e; font-size: 18px; margin-bottom: 16px;">🔵 Infrastructure Status</h2>
                 <div class="cards-grid">
                     <div class="card">
                         <div class="card-label">Hosts</div>
@@ -1434,9 +1434,9 @@
                         <div class="card-detail">Active</div>
                     </div>
                 </div>
-                <div style="margin-top: 12px; display: flex; gap: 16px;">
-                    <span style="color: #ff9800;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
-                    <span style="color: #f44336;">🔴 Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
+                <div style="margin-top: 12px; display: flex; gap: 16px; font-size: 13px; font-weight: 500;">
+                    <span style="color: #d97706;">⚠ Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
+                    <span style="color: #dc2626;">🔴 Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
                 </div>
             </div>
             
@@ -1450,8 +1450,8 @@
                                 <span>${m?.cpu || 0}%</span>
                                 <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? '🔴' : (m?.cpu || 0) > 60 ? '🟡' : '🟢'}</span>
                             </div>
-                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-                                <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            <div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#ef4444' : (m?.cpu || 0) > 60 ? '#f59e0b' : '#10b981'};border-radius:3px;transition:width 0.3s;"></div>
                             </div>
                         </div>
                     </div>
@@ -1465,8 +1465,8 @@
                                 <span>${m?.ram || 0}%</span>
                                 <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
                             </div>
-                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-                                <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            <div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#ef4444' : (m?.ram || 0) > 60 ? '#f59e0b' : '#10b981'};border-radius:3px;transition:width 0.3s;"></div>
                             </div>
                         </div>
                     </div>
@@ -1474,7 +1474,8 @@
                 </div>
                 <div class="card">
                     <div class="card-label">Network</div>
-                    <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
+                    <div style="font-size: 24px; font-weight: bold;">${m?.network_speed_mbps || 0} <span style="font-size:14px;color:#6a7090;font-weight:400;">Mbps</span></div>
+                    <div class="card-detail">${m?.network_rx_mbps || 0} RX / ${m?.network_tx_mbps || 0} TX</div>
                     <div class="sparkline" id="net-sparkline"></div>
                 </div>
                 <div class="card">
@@ -1485,8 +1486,8 @@
                                 <span>${m?.disk || 0}%</span>
                                 <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
                             </div>
-                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-                                <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            <div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#ef4444' : (m?.disk || 0) > 60 ? '#f59e0b' : '#10b981'};border-radius:3px;transition:width 0.3s;"></div>
                             </div>
                         </div>
                     </div>
@@ -1495,18 +1496,18 @@
             </div>
             
             <!-- Lower half - More detail -->
-            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px;">
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-top: 14px;">
                 <!-- Left: Host Details -->
                 <div class="panel">
                     <div class="panel-header">Host Details</div>
                     <div class="panel-body">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                            <div><span style="color:#6a7090;font-size:11px;">OS</span><br><span style="font-size:13px;">${m?.os || 'Linux'}</span></div>
-                            <div><span style="color:#6a7090;font-size:11px;">CPU Cores</span><br><span style="font-size:13px;">${m?.cpu_count || 'N/A'}</span></div>
-                            <div><span style="color:#6a7090;font-size:11px;">Uptime</span><br><span style="font-size:13px;">${m?.uptime || 'N/A'}</span></div>
-                            <div><span style="color:#6a7090;font-size:11px;">Swap</span><br><span style="font-size:13px;">${m?.swap || 0}%</span></div>
-                            <div><span style="color:#6a7090;font-size:11px;">Load (1m)</span><br><span style="font-size:13px;">${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span></div>
-                            <div><span style="color:#6a7090;font-size:11px;">Processes</span><br><span style="font-size:13px;">${m?.processes || 0}</span></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">OS</span><br><span style="font-size:13px;font-weight:500;">${m?.os || 'Linux'}</span></div>
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">CPU Cores</span><br><span style="font-size:13px;font-weight:500;">${m?.cpu_count || 'N/A'}</span></div>
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">Uptime</span><br><span style="font-size:13px;font-weight:500;">${m?.uptime || 'N/A'}</span></div>
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">Swap</span><br><span style="font-size:13px;font-weight:500;">${m?.swap_total_gb || 0} GB <span style="color:#8a90a8;font-size:11px;">(${(m?.swap || 0).toFixed(1)}% used)</span></span></div>
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">Load (1m / 5m / 15m)</span><br><span style="font-size:13px;font-weight:500;">${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'} / ${m?.load_avg_5m ? m.load_avg_5m.toFixed(2) : '0.00'} / ${m?.load_avg_15m ? m.load_avg_15m.toFixed(2) : '0.00'}</span></div>
+                            <div><span style="color:#8a90a8;font-size:10px;text-transform:uppercase;font-weight:600;">Processes</span><br><span style="font-size:13px;font-weight:500;">${m?.processes || 0}</span></div>
                         </div>
                     </div>
                 </div>
@@ -1514,13 +1515,14 @@
                 <!-- Right: Recent Activity -->
                 <div class="panel">
                     <div class="panel-header">Recent Activity</div>
-                    <div class="panel-body" style="max-height:200px;overflow-y:auto;">
+                    <div class="panel-body" style="max-height:220px;overflow-y:auto;">
                         ${(state.events || []).slice(0, 5).map(e => `
-                            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;">
-                                <span style="color:${e.severity === 'error' ? '#f44336' : e.severity === 'warning' ? '#ff9800' : '#4caf50'};">${e.message}</span>
-                                <span style="color:#6a7090;font-size:10px;">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                            <div class="timeline-item">
+                                <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                                <span class="timeline-icon ${e.severity === 'success' ? 'success' : e.severity === 'warning' ? 'warning' : 'error'}">${e.severity === 'success' ? '✓' : e.severity === 'warning' ? '⚠' : '✗'}</span>
+                                <span style="font-size:12px;">${e.message}</span>
                             </div>
-                        `).join('') || '<div style="color:#6a7090;font-size:12px;">No recent activity</div>'}
+                        `).join('') || '<div style="color:#8a90a8;font-size:12px;text-align:center;padding:20px;">No recent activity</div>'}
                     </div>
                 </div>
             </div>
