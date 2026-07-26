@@ -441,7 +441,7 @@ class InfrastructureMonitor:
         # 2. For each VM, enrich with SSH metrics
         for vm_name, vm_ip in self.known_vm_ips.items():
             # Get SSH-based metrics
-            ssh_metrics = collect_vm_metrics_ssh(vm_ip, ssh_user='root')
+            ssh_metrics = collect_vm_metrics_ssh(vm_ip, ssh_user='DevCyp')
             
             # Determine state
             state = 'running' if ssh_metrics.get('reachable') else 'unknown'
@@ -516,7 +516,7 @@ class InfrastructureMonitor:
         # Get SSH metrics if VM has known IP
         if vm_name in self.known_vm_ips:
             ip = self.known_vm_ips[vm_name]
-            ssh_metrics = collect_vm_metrics_ssh(ip)
+            ssh_metrics = collect_vm_metrics_ssh(ip, ssh_user='DevCyp')
             if ssh_metrics.get('reachable'):
                 details['state'] = 'running'
                 details['memory'] = ssh_metrics.get('memory', details['memory'])
