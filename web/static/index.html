@@ -1397,102 +1397,199 @@
     }
        
         
-        function renderK8sView(type) {
-            const k8s = state.kubernetes || {};
-            let data = [];
-            let title = '';
-            let extraColumns = '';
-            let rowActions = (item) => '';
-            
-            switch(type) {
-                case 'k8s-nodes':
-                    data = k8s.nodes || [];
-                    title = 'Nodes';
-                    extraColumns = `<th>Version</th><th>CPU</th><th>Memory</th>`;
-                    rowActions = (item) => `
-                        <button class="btn" onclick="executeAction('node', '${item.name}', 'cordon')" style="font-size:10px;padding:2px 6px;" title="Cordon">⛔</button>
-                        <button class="btn" onclick="executeAction('node', '${item.name}', 'uncordon')" style="font-size:10px;padding:2px 6px;" title="Uncordon">✅</button>
-                        <button class="btn btn-danger" onclick="executeAction('node', '${item.name}', 'drain')" style="font-size:10px;padding:2px 6px;" title="Drain">💧</button>
+      function renderK8sView(type) {
+        const k8s = state.kubernetes || {};
+        let data = [];
+        let title = '';
+        let columns = '';
+        let rowRenderer = (item) => '';
+        
+        switch(type) {
+            case 'k8s-nodes':
+                data = k8s.nodes || [];
+                title = 'Nodes';
+                columns = `
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Role</th>
+                    <th>Version</th>
+                    <th>CPU</th>
+                    <th>Memory</th>
+                    <th>Age</th>
+                    <th>Actions</th>
+                `;
+                rowRenderer = (item) => {
+                    // Detect roles from labels or status
+                    let role = '<none>';
+                    if (item.status && item.status.toLowerCase().includes('control-plane')) {
+                        role = 'control-plane';
+                    }
+                    // Check for known node names with roles
+                    const knownRoles = {
+                        'k8s-node-03': 'control-plane, etcd',
+                        'k8s-node-01': 'worker',
+                        'k8s-node-02': 'worker'
+                    };
+                    if (knownRoles[item.name]) {
+                        role = knownRoles[item.name];
+                    }
+                    
+                    return `
+                        <tr class="${state.selectedItems.has('k8s:' + item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                            <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:' + item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                            <td style="color:#64b5f6;">${item.name}</td>
+                            <td><span class="badge ${getK8sStatusBadge(item.status)}">${item.status || '-'}</span></td>
+                            <td><span style="font-size:11px;color:${role === 'control-plane, etcd' ? '#ff9800' : '#8890b0'};">${role}</span></td>
+                            <td style="font-size:11px;">${item.version || '-'}</td>
+                            <td>${item.cpu || '-'}</td>
+                            <td>${item.memory || '-'}</td>
+                            <td>${item.age || '-'}</td>
+                            <td onclick="event.stopPropagation()">
+                                <button class="btn" onclick="executeAction('node', '${item.name}', 'cordon')" style="font-size:10px;padding:2px 6px;" title="Cordon">⛔</button>
+                                <button class="btn" onclick="executeAction('node', '${item.name}', 'uncordon')" style="font-size:10px;padding:2px 6px;" title="Uncordon">✅</button>
+                                <button class="btn btn-danger" onclick="executeAction('node', '${item.name}', 'drain')" style="font-size:10px;padding:2px 6px;" title="Drain">💧</button>
+                            </td>
+                        </tr>
                     `;
-                    break;
-                case 'k8s-pods':
-                    data = k8s.pods || [];
-                    title = 'Pods';
-                    extraColumns = `<th>Node</th><th>Restarts</th>`;
-                    rowActions = (item) => `
-                        <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">▶</button>
-                        <button class="btn btn-danger" onclick="executeAction('pod', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
-                        <button class="btn" onclick="showPodLogs('${item.namespace}', '${item.name}')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
-                    `;
-                    break;
-                case 'k8s-deployments':
-                    data = k8s.deployments || [];
-                    title = 'Deployments';
-                    extraColumns = ``;
-                    rowActions = (item) => `
-                        <button class="btn btn-primary" onclick="scaleDeployment('${item.name}')" style="font-size:10px;padding:2px 6px;" title="Scale">📈</button>
-                        <button class="btn btn-danger" onclick="executeAction('deployment', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
-                    `;
-                    break;
-                case 'k8s-services':
-                    data = k8s.services || [];
-                    title = 'Services';
-                    extraColumns = ``;
-                    rowActions = (item) => `
-                        <button class="btn" onclick="showNotification('Service', 'Details for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Details">ℹ</button>
-                    `;
-                    break;
-                case 'k8s-jobs':
-                    data = (k8s.jobs || []).concat(k8s.cronjobs || []);
-                    title = 'Jobs';
-                    extraColumns = ``;
-                    rowActions = (item) => `
-                        <button class="btn" onclick="showNotification('Job', 'Logs for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
-                    `;
-                    break;
-                default:
-                    data = [];
-                    title = 'Unknown';
-            }
-            
-            document.getElementById('content-area').innerHTML = `
-                <div class="panel">
-                    <div class="panel-header">Kubernetes ${title} <span style="color:#6a7090;font-weight:normal;">(${data.length})</span></div>
-                    <div class="panel-body" style="padding:0;">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
-                                    <th>Name</th>
-                                    <th>Namespace</th>
-                                    <th>Status</th>
-                                    ${extraColumns}
-                                    <th>Age</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.map(item => `
-                                    <tr class="${state.selectedItems.has('k8s:'+item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
-                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:'+item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
-                                        <td style="color:#64b5f6;">${item.name}</td>
-                                        <td>${item.namespace || '-'}</td>
-                                        <td><span class="badge ${getK8sStatusBadge(item.status || item.state)}">${item.status || item.state || '-'}</span></td>
-                                        ${type === 'k8s-nodes' ? `<td>${item.version || '-'}</td><td>${item.cpu || '-'}</td><td>${item.memory || '-'}</td>` : ''}
-                                        ${type === 'k8s-pods' ? `<td>${item.node || '-'}</td><td>${item.restarts || 0}</td>` : ''}
-                                        <td>${item.age || '-'}</td>
-                                        <td onclick="event.stopPropagation()">
-                                            ${rowActions(item)}
-                                        </td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
+                };
+                break;
+                
+            case 'k8s-pods':
+                data = k8s.pods || [];
+                title = 'Pods';
+                columns = `
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                    <th>Name</th>
+                    <th>Namespace</th>
+                    <th>Status</th>
+                    <th>Node</th>
+                    <th>Restarts</th>
+                    <th>Age</th>
+                    <th>Actions</th>
+                `;
+                rowRenderer = (item) => `
+                    <tr class="${state.selectedItems.has('k8s:' + item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:' + item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                        <td style="color:#64b5f6;">${item.name}</td>
+                        <td>${item.namespace || '-'}</td>
+                        <td><span class="badge ${getK8sStatusBadge(item.status)}">${item.status || '-'}</span></td>
+                        <td>${item.node || '-'}</td>
+                        <td>${item.restarts || 0}</td>
+                        <td>${item.age || '-'}</td>
+                        <td onclick="event.stopPropagation()">
+                            <button class="btn" onclick="executeAction('pod', '${item.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">▶</button>
+                            <button class="btn btn-danger" onclick="executeAction('pod', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
+                            <button class="btn" onclick="showPodLogs('${item.namespace}', '${item.name}')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
+                        </td>
+                    </tr>
+                `;
+                break;
+                
+            case 'k8s-deployments':
+                data = k8s.deployments || [];
+                title = 'Deployments';
+                columns = `
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                    <th>Name</th>
+                    <th>Namespace</th>
+                    <th>Age</th>
+                    <th>Actions</th>
+                `;
+                rowRenderer = (item) => `
+                    <tr class="${state.selectedItems.has('k8s:' + item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:' + item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                        <td style="color:#64b5f6;">${item.name}</td>
+                        <td>${item.namespace || '-'}</td>
+                        <td>${item.age || '-'}</td>
+                        <td onclick="event.stopPropagation()">
+                            <button class="btn btn-primary" onclick="scaleDeployment('${item.name}')" style="font-size:10px;padding:2px 6px;" title="Scale">📈</button>
+                            <button class="btn btn-danger" onclick="executeAction('deployment', '${item.name}', 'delete')" style="font-size:10px;padding:2px 6px;" title="Delete">🗑</button>
+                        </td>
+                    </tr>
+                `;
+                break;
+                
+            case 'k8s-services':
+                data = k8s.services || [];
+                title = 'Services';
+                columns = `
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                    <th>Name</th>
+                    <th>Namespace</th>
+                    <th>Age</th>
+                    <th>Actions</th>
+                `;
+                rowRenderer = (item) => `
+                    <tr class="${state.selectedItems.has('k8s:' + item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:' + item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                        <td style="color:#64b5f6;">${item.name}</td>
+                        <td>${item.namespace || '-'}</td>
+                        <td>${item.age || '-'}</td>
+                        <td onclick="event.stopPropagation()">
+                            <button class="btn" onclick="showNotification('Service', 'Details for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Details">ℹ</button>
+                        </td>
+                    </tr>
+                `;
+                break;
+                
+            case 'k8s-jobs':
+                data = (k8s.jobs || []).concat(k8s.cronjobs || []);
+                title = 'Jobs';
+                columns = `
+                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'k8s')"></th>
+                    <th>Name</th>
+                    <th>Namespace</th>
+                    <th>Age</th>
+                    <th>Actions</th>
+                `;
+                rowRenderer = (item) => `
+                    <tr class="${state.selectedItems.has('k8s:' + item.name) ? 'selected' : ''}" onclick="openDrawer('${type}', '${item.name}')">
+                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('k8s:' + item.name) ? 'checked' : ''} onclick="toggleSelectItem('k8s:${item.name}')"></td>
+                        <td style="color:#64b5f6;">${item.name}</td>
+                        <td>${item.namespace || '-'}</td>
+                        <td>${item.age || '-'}</td>
+                        <td onclick="event.stopPropagation()">
+                            <button class="btn" onclick="showNotification('Job', 'Logs for ${item.name}', 'info')" style="font-size:10px;padding:2px 6px;" title="Logs">📋</button>
+                        </td>
+                    </tr>
+                `;
+                break;
+                
+            default:
+                data = [];
+                title = 'Unknown';
+                columns = '<th>Name</th><th>Info</th>';
+                rowRenderer = (item) => `
+                    <tr>
+                        <td>${item.name || '-'}</td>
+                        <td>Unknown resource type</td>
+                    </tr>
+                `;
         }
         
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">
+                    Kubernetes ${title} 
+                    <span style="color:#6a7090;font-weight:normal;">(${data.length})</span>
+                </div>
+                <div class="panel-body" style="padding:0;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>${columns}</tr>
+                        </thead>
+                        <tbody>
+                            ${data.length > 0 
+                                ? data.map(item => rowRenderer(item)).join('') 
+                                : `<tr><td colspan="10" style="text-align:center;color:#6a7090;padding:20px;">No ${title.toLowerCase()} found</td></tr>`
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
         function renderProblems(problems) {
             problems = problems || [];
             document.getElementById('content-area').innerHTML = `
@@ -1514,16 +1611,65 @@
             `;
         }
         
-        function renderJobQueue() {
-            document.getElementById('content-area').innerHTML = `
-                <div class="panel">
-                    <div class="panel-header">Job Queue</div>
-                    <div class="panel-body" id="job-queue-content">
-                        <div style="color:#6a7090;font-size:12px;">Loading jobs...</div>
-                    </div>
+      function renderJobQueue() {
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">Job Queue</div>
+                <div class="panel-body" id="job-queue-content">
+                    <div style="color:#6a7090;font-size:12px;">Loading jobs...</div>
                 </div>
-            `;
-        }
+            </div>
+        `;
+        // Actually fetch the jobs
+        fetch('/api/jobs')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('job-queue-content');
+                if (!container) return;
+                
+                const running = data.running || [];
+                const completed = data.completed || [];
+                
+                container.innerHTML = `
+                    ${running.length > 0 ? `
+                        <div style="font-size:11px;color:#64b5f6;margin-bottom:8px;">▶ RUNNING (${running.length})</div>
+                        ${running.map(j => `
+                            <div class="job-item">
+                                <div style="display:flex;justify-content:space-between;">
+                                    <span style="color:#64b5f6;">${j.type} on ${j.target}</span>
+                                    <span class="badge badge-info">${j.status}</span>
+                                </div>
+                                <div style="font-size:11px;color:#8890b0;margin-top:4px;">Step ${j.current_step + 1}/${j.total_steps}</div>
+                                <div class="job-progress">
+                                    <div class="job-progress-fill" style="width:${j.progress}%;"></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    ` : ''}
+                    
+                    ${completed.length > 0 ? `
+                        <div style="font-size:11px;color:#4caf50;margin:12px 0 8px;">✓ COMPLETED (${completed.length})</div>
+                        ${completed.slice(0, 10).map(j => `
+                            <div class="job-item" style="opacity:0.8;">
+                                <div style="display:flex;justify-content:space-between;">
+                                    <span>${j.type} on ${j.target}</span>
+                                    <span class="badge ${j.status === 'completed' ? 'badge-success' : 'badge-error'}">${j.status}</span>
+                                </div>
+                                <div style="font-size:10px;color:#6a7090;margin-top:4px;">${j.end_time ? new Date(j.end_time).toLocaleTimeString() : ''}</div>
+                            </div>
+                        `).join('')}
+                    ` : ''}
+                    
+                    ${running.length === 0 && completed.length === 0 ? `
+                        <div style="color:#6a7090;font-size:12px;text-align:center;padding:20px;">No jobs in queue</div>
+                    ` : ''}
+                `;
+            })
+            .catch(() => {
+                const container = document.getElementById('job-queue-content');
+                if (container) container.innerHTML = '<div style="color:#f44336;font-size:12px;">Failed to load jobs</div>';
+            });
+    }
         
         function renderAutomations() {
             document.getElementById('content-area').innerHTML = `

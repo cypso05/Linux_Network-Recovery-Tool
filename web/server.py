@@ -288,12 +288,12 @@ class InfrastructureMonitor:
     # ============================================================
     # SYSTEM METRICS (psutil-based - already good)
     # ============================================================
-    
     def get_system_metrics(self):
         cpu_percent = psutil.cpu_percent(interval=0.1)
         mem = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         net = psutil.net_io_counters()
+        swap = psutil.swap_memory()  # Single call for all swap data
         
         # Calculate network speed from history
         prev = self.metrics_history[-1] if self.metrics_history else None
@@ -324,7 +324,9 @@ class InfrastructureMonitor:
             'load_avg_5m': psutil.getloadavg()[1],
             'load_avg_15m': psutil.getloadavg()[2],
             'processes': len(psutil.pids()),
-            'swap': psutil.swap_memory().percent,
+            'swap': swap.percent,
+            'swap_used_gb': round(swap.used / (1024**3), 2),
+            'swap_total_gb': round(swap.total / (1024**3), 2),
             'uptime': self._get_uptime(),
             'uptime_seconds': time.time() - psutil.boot_time(),
             'os': os.uname().sysname if hasattr(os, 'uname') else 'Linux',
