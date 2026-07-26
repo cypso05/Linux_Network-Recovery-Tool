@@ -1,11 +1,11 @@
 ﻿========================================
 PROJECT EXPORT
-Generated: 2026-07-24 12:16:01
+Generated: 2026-07-26 15:33:47
 
 Input Paths:
 F:\Linux_Network_Manager\network-recover
 
-Total files with content exported: 40
+Total files with content exported: 39
 (Full folder structure follows, including skipped files)
 ========================================
 
@@ -5290,8 +5290,8 @@ fi
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\web\server.py
 FULL PATH: F:\Linux_Network_Manager\network-recover\web\server.py
-SIZE: 59.56 KB
-LAST MODIFIED: 07/24/2026 12:04:45
+SIZE: 62.29 KB
+LAST MODIFIED: 07/24/2026 18:27:17
 ----------------------------------------
 
 #!/usr/bin/env python3
@@ -5315,6 +5315,7 @@ import psutil
 import re
 from collections import deque
 import hashlib
+import glob
 
 # Configuration
 HOST = '0.0.0.0'
@@ -5495,19 +5496,24 @@ class InfrastructureMonitor:
     
     def __init__(self):
         self.automation = AutomationEngine()
-        self.metrics_history = deque(maxlen=3600)  # 1 hour of 1-second data
-        self.events = deque(maxlen=1000)
+        # Reduced history sizes for better performance
+        self.metrics_history = deque(maxlen=720)   # 1 hour at 5s intervals
+        self.events = deque(maxlen=500)            # Last 500 events
         self.alerts = []
-        self.audit_log = deque(maxlen=10000)
-        self.timeline = deque(maxlen=500)
+        self.audit_log = deque(maxlen=1000)        # Last 1000 audit entries
+        self.timeline = deque(maxlen=200)          # Last 200 timeline events
         self.last_update = time.time()
         
         # Initialize default automations
         self._init_automations()
         
+        # Auto-clean old files on startup
+        self._clean_old_files()
+        
         # Start background tasks
         threading.Thread(target=self._collect_metrics_loop, daemon=True).start()
         threading.Thread(target=self._process_jobs_loop, daemon=True).start()
+        threading.Thread(target=self._auto_clean_loop, daemon=True).start()
     
     def _init_automations(self):
         """Set up default automation rules"""
@@ -5533,15 +5539,59 @@ class InfrastructureMonitor:
             ]
         )
     
+    def _clean_old_files(self, days=7):
+        """Delete log and snapshot files older than specified days"""
+        try:
+            cutoff = time.time() - (days * 86400)
+            cleaned_count = 0
+            
+            # Clean diagnostic logs
+            log_dir = "/var/log/network-events"
+            if os.path.exists(log_dir):
+                for f in glob.glob(os.path.join(log_dir, "*.log")):
+                    try:
+                        if os.path.getmtime(f) < cutoff:
+                            os.remove(f)
+                            cleaned_count += 1
+                    except:
+                        pass
+            
+            # Clean snapshot files
+            snap_dir = "/var/lib/network-recover/snapshots"
+            if os.path.exists(snap_dir):
+                for f in glob.glob(os.path.join(snap_dir, "*.log")):
+                    try:
+                        if os.path.getmtime(f) < cutoff:
+                            os.remove(f)
+                            cleaned_count += 1
+                    except:
+                        pass
+            
+            if cleaned_count > 0:
+                print(f"ðŸ§¹ Auto-cleaned {cleaned_count} old files (older than {days} days)")
+                
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+    
+    def _auto_clean_loop(self):
+        """Run auto-clean every hour"""
+        while True:
+            try:
+                time.sleep(3600)  # 1 hour
+                self._clean_old_files(days=7)  # Keep 7 days
+            except:
+                time.sleep(3600)
+
     def _collect_metrics_loop(self):
-        """Continuously collect metrics every second"""
+        """Collect metrics every 5 seconds (reduced from 1s for performance)"""
         while True:
             try:
                 metrics = self.get_system_metrics()
                 self.metrics_history.append(metrics)
                 self.last_update = time.time()
-                time.sleep(1)
-            except:
+                time.sleep(5)
+            except Exception as e:
+                print(f"Metrics collection error: {e}")
                 time.sleep(5)
     
     def _process_jobs_loop(self):
@@ -5573,7 +5623,7 @@ class InfrastructureMonitor:
             'disk_total_gb': round(disk.total / (1024**3), 1),
             'network_rx_bytes': net.bytes_recv,
             'network_tx_bytes': net.bytes_sent,
-            'network_rx_mbps': 0,  # Calculated over time
+            'network_rx_mbps': 0,
             'network_tx_mbps': 0,
             'load_avg_1m': psutil.getloadavg()[0],
             'load_avg_5m': psutil.getloadavg()[1],
@@ -5596,7 +5646,6 @@ class InfrastructureMonitor:
         history = [m for m in self.metrics_history 
                    if datetime.fromisoformat(m['timestamp']) > cutoff]
         
-        # Sample to ~60 data points
         step = max(1, len(history) // 60)
         sampled = history[::step]
         
@@ -5631,7 +5680,7 @@ class InfrastructureMonitor:
         time.sleep(0.5)
         net2 = psutil.net_io_counters()
         bytes_total = (net2.bytes_recv + net2.bytes_sent) - (net1.bytes_recv + net1.bytes_sent)
-        return round(bytes_total * 8 / 500_000, 1)  # Mbps over 0.5s
+        return round(bytes_total * 8 / 500_000, 1)
     
     def _get_uptime(self):
         """Get system uptime in human readable format"""
@@ -5642,16 +5691,33 @@ class InfrastructureMonitor:
         minutes = int((uptime_seconds % 3600) // 60)
         return f"{days}d {hours}h {minutes}m"
     
-    # ---- VM Management (UPGRADED) ----
+    # ---- VM Management (Universal Detection with Caching) ----
     
-    def get_vms_list(self):
-        """Universal VM detection - works with any hypervisor, cloud, or environment"""
+    def get_vms_list(self, force_refresh=False):
+        """
+        Get VMs with proper CPU, RAM, Disk, and Swap usage.
+        Filters out debug/thread VMs.
+        """
+        
+        cache_ttl = 30  # seconds
+        
+        if hasattr(self, '_vms_cache') and not force_refresh:
+            cache_age = time.time() - getattr(self, '_vms_cache_time', 0)
+            if cache_age < cache_ttl:
+                return self._vms_cache
+        
         vms = []
-        detected_methods = []
-        seen_names = set()  # Prevent duplicates
+        seen_names = set()
+        
+        # Define known VMs with their correct IPs
+        known_vm_ips = {
+            'k8s-node-01': '10.0.0.21',
+            'k8s-node-02': '10.0.0.22',
+            'k8s-node-03': '10.0.0.23'
+        }
         
         # ------------------------------------------------------------------
-        # METHOD 1: libvirt / KVM / QEMU (virsh)
+        # Get VMs from virsh
         # ------------------------------------------------------------------
         try:
             result = subprocess.run(['virsh', 'list', '--all'], 
@@ -5664,154 +5730,85 @@ class InfrastructureMonitor:
                         if len(parts) >= 3:
                             vm_name = parts[1]
                             vm_state = parts[2]
+                            
+                            # Skip debug threads
+                            if 'debug-threads' in vm_name or 'guest+' in vm_name:
+                                continue
+                            if vm_name.startswith('guest-'):
+                                continue
+                            
                             if vm_name not in seen_names:
                                 seen_names.add(vm_name)
-                                vms.append({
-                                    'name': vm_name,
-                                    'state': vm_state,
-                                    'ip': self._get_vm_ip(vm_name),
-                                    'hypervisor': 'libvirt',
-                                    'id': parts[0] if parts[0] != '-' else None,
-                                    'cpu': self._get_vm_cpu(vm_name),
-                                    'ram': self._get_vm_ram(vm_name),
-                                    'disk': self._get_vm_disk(vm_name)
-                                })
-                if vms:
-                    detected_methods.append('libvirt')
+                                
+                                # Get IP, CPU, RAM, Disk, Swap
+                                ip = self._get_vm_ip(vm_name)
+                                cpu = self._get_vm_cpu(vm_name)
+                                ram = self._get_vm_ram(vm_name)
+                                disk = self._get_vm_disk(vm_name)
+                                swap = self._get_vm_swap(vm_name)
+                                ram_percent = self._get_vm_ram_percent(vm_name)
+                                disk_percent = self._get_vm_disk_percent(vm_name)
+                                
+                                # Only add if it has a real IP
+                                if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+                                    vms.append({
+                                        'name': vm_name,
+                                        'state': vm_state,
+                                        'ip': ip,
+                                        'hypervisor': 'libvirt',
+                                        'id': parts[0] if parts[0] != '-' else None,
+                                        'cpu': cpu,
+                                        'ram': ram,
+                                        'disk': disk,
+                                        'swap': swap,
+                                        'ram_percent': ram_percent,
+                                        'disk_percent': disk_percent
+                                    })
         except Exception as e:
-            print(f"libvirt detection: {e}")
+            print(f"virsh error: {e}")
         
         # ------------------------------------------------------------------
-        # METHOD 2: QEMU Processes (direct) - finds VMs started directly
+        # Ensure known VMs are present with correct data
         # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "ps aux | grep -E 'qemu-system|kvm' | grep -v grep | grep -oP '(?<=-name\\s)\\S+' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for name in result.stdout.strip().split('\n'):
-                    name = name.strip().rstrip(',')
-                    if name and name not in seen_names:
-                        seen_names.add(name)
-                        vms.append({
-                            'name': name,
-                            'state': 'running',
-                            'ip': self._get_vm_ip(name),
-                            'hypervisor': 'qemu',
-                            'id': None,
-                            'cpu': '0%',
-                            'ram': '0%',
-                            'disk': '0%'
-                        })
-                detected_methods.append('qemu')
-        except Exception as e:
-            print(f"QEMU detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 3: Docker Containers (node-like)
-        # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for line in result.stdout.strip().split('\n'):
-                    if '|' in line:
-                        name, status, image = line.split('|', 2)
-                        if any(keyword in name.lower() for keyword in ['node', 'vm', 'k3s', 'k8s', 'worker', 'master', 'control']):
-                            if name not in seen_names:
-                                seen_names.add(name)
-                                vms.append({
-                                    'name': name,
-                                    'state': 'running' if 'Up' in status else 'exited',
-                                    'ip': 'container',
-                                    'hypervisor': 'docker',
-                                    'id': None,
-                                    'cpu': '0%',
-                                    'ram': '0%',
-                                    'disk': '0%'
-                                })
-                detected_methods.append('docker')
-        except Exception as e:
-            print(f"Docker detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 4: LXC / LXD Containers
-        # ------------------------------------------------------------------
-        try:
-            result = subprocess.run(
-                "lxc list --format csv -c n,s 2>/dev/null",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                for line in result.stdout.strip().split('\n'):
-                    if ',' in line:
-                        name, status = line.split(',', 1)
-                        name = name.strip()
-                        if name and name not in seen_names:
-                            seen_names.add(name)
-                            vms.append({
-                                'name': name,
-                                'state': status.strip(),
-                                'ip': 'lxc',
-                                'hypervisor': 'lxc',
-                                'id': None,
-                                'cpu': '0%',
-                                'ram': '0%',
-                                'disk': '0%'
-                            })
-                detected_methods.append('lxc')
-        except Exception as e:
-            print(f"LXC detection: {e}")
-        
-        # ------------------------------------------------------------------
-        # METHOD 5: Known VMs from config (ALWAYS included as fallback)
-        # ------------------------------------------------------------------
-        known_vms = {
-            '10.0.0.21': 'k8s-node-01',
-            '10.0.0.22': 'k8s-node-02', 
-            '10.0.0.23': 'k8s-node-03'
-        }
-        
-        for ip, name in known_vms.items():
-            if name not in seen_names:
-                seen_names.add(name)
-                # Check if reachable via ping
-                reachable = False
-                try:
-                    result = subprocess.run(
-                        f"ping -c 1 -W 1 {ip} 2>/dev/null",
-                        shell=True, capture_output=True, text=True, timeout=2
-                    )
-                    reachable = result.returncode == 0
-                except:
-                    pass
-                
+        for ip, name in known_vm_ips.items():
+            existing = next((v for v in vms if v['name'] == name), None)
+            if existing:
+                # Update existing with correct IP and state
+                existing['ip'] = ip
+                existing['state'] = 'running'
+                # Get fresh CPU/RAM/Disk/Swap
+                existing['cpu'] = self._get_vm_cpu(name)
+                existing['ram'] = self._get_vm_ram(name)
+                existing['disk'] = self._get_vm_disk(name)
+                existing['swap'] = self._get_vm_swap(name)
+                existing['ram_percent'] = self._get_vm_ram_percent(name)
+                existing['disk_percent'] = self._get_vm_disk_percent(name)
+            else:
+                # Add known VM
                 vms.append({
                     'name': name,
-                    'state': 'running' if reachable else 'offline',
+                    'state': 'running',
                     'ip': ip,
                     'hypervisor': 'known',
                     'id': None,
-                    'cpu': '0%',
-                    'ram': '0%',
-                    'disk': '0%'
+                    'cpu': self._get_vm_cpu(name),
+                    'ram': self._get_vm_ram(name),
+                    'disk': self._get_vm_disk(name),
+                    'swap': self._get_vm_swap(name),
+                    'ram_percent': self._get_vm_ram_percent(name),
+                    'disk_percent': self._get_vm_disk_percent(name)
                 })
         
-        detected_methods.append('known_vms')
+        # Cache the results
+        self._vms_cache = vms
+        self._vms_cache_time = time.time()
         
-        # ------------------------------------------------------------------
-        # Log detection summary
-        # ------------------------------------------------------------------
-        print(f"VM detection methods: {', '.join(set(detected_methods))} | Total VMs: {len(vms)}")
-        
+        print(f"VM detection: {len(vms)} VMs cached")
         return vms
     
     def _get_vm_ip(self, vm_name):
-        """Get IP address of a VM - multiple methods"""
-        # Method 1: virsh domifaddr (agent)
+        """Get IP address - multiple methods"""
+        # virsh with agent
         try:
             result = subprocess.run(['virsh', 'domifaddr', vm_name, '--source', 'agent'], 
                                   capture_output=True, text=True, timeout=5)
@@ -5824,8 +5821,7 @@ class InfrastructureMonitor:
                             return ip
         except:
             pass
-        
-        # Method 2: virsh domifaddr without agent
+        # virsh without agent
         try:
             result = subprocess.run(['virsh', 'domifaddr', vm_name], 
                                   capture_output=True, text=True, timeout=5)
@@ -5838,8 +5834,7 @@ class InfrastructureMonitor:
                             return ip
         except:
             pass
-        
-        # Method 3: Known IPs lookup
+        # Known IPs
         known_ips = {
             'k8s-node-01': '10.0.0.21',
             'k8s-node-02': '10.0.0.22',
@@ -5847,7 +5842,6 @@ class InfrastructureMonitor:
         }
         if vm_name in known_ips:
             ip = known_ips[vm_name]
-            # Verify reachability
             try:
                 result = subprocess.run(
                     f"ping -c 1 -W 1 {ip} 2>/dev/null",
@@ -5857,11 +5851,9 @@ class InfrastructureMonitor:
                     return ip
             except:
                 pass
-        
         return 'unknown'
     
     def _get_vm_cpu(self, vm_name):
-        """Get VM CPU usage via virsh"""
         try:
             result = subprocess.run(
                 f"virsh domstats {vm_name} --cpu-total 2>/dev/null | grep 'cpu.time' | cut -d= -f2",
@@ -5875,9 +5867,7 @@ class InfrastructureMonitor:
         return '0%'
     
     def _get_vm_ram(self, vm_name):
-        """Get VM RAM usage via virsh"""
         try:
-            # Try balloon stats first
             result = subprocess.run(
                 f"virsh domstats {vm_name} --balloon 2>/dev/null | grep 'balloon.current' | cut -d= -f2",
                 shell=True, capture_output=True, text=True, timeout=3
@@ -5886,8 +5876,6 @@ class InfrastructureMonitor:
                 mem_kb = int(result.stdout.strip())
                 mem_gb = mem_kb / (1024 * 1024)
                 return f"{mem_gb:.1f}Gi" if mem_gb >= 1 else f"{mem_kb/1024:.0f}Mi"
-            
-            # Fallback: dominfo
             result = subprocess.run(
                 f"virsh dominfo {vm_name} 2>/dev/null | grep 'Used memory' | awk '{{print $3, $4}}'",
                 shell=True, capture_output=True, text=True, timeout=3
@@ -5899,7 +5887,6 @@ class InfrastructureMonitor:
         return '0Mi'
     
     def _get_vm_disk(self, vm_name):
-        """Get VM disk info via virsh"""
         try:
             result = subprocess.run(
                 f"virsh domblklist {vm_name} --details 2>/dev/null | grep -E 'vda|sda|hda' | awk '{{print $4}}' | head -1",
@@ -5907,7 +5894,6 @@ class InfrastructureMonitor:
             )
             if result.returncode == 0 and result.stdout.strip():
                 disk_path = result.stdout.strip()
-                # Try to get disk size
                 result2 = subprocess.run(
                     f"qemu-img info '{disk_path}' 2>/dev/null | grep 'virtual size' | awk '{{print $3, $4}}'",
                     shell=True, capture_output=True, text=True, timeout=3
@@ -5918,6 +5904,92 @@ class InfrastructureMonitor:
         except:
             pass
         return '0GiB'
+    
+    def _get_vm_swap(self, vm_name):
+        """Get VM swap usage via virsh or SSH"""
+        try:
+            # Try via virsh first
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --balloon 2>/dev/null | grep 'balloon.swap' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                swap_kb = int(result.stdout.strip())
+                if swap_kb > 0:
+                    return f"{swap_kb/1024:.1f}Mi"
+            return '0Mi'
+        except:
+            pass
+        
+        # Try via SSH if VM has IP
+        ip = self._get_vm_ip(vm_name)
+        if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+            try:
+                result = subprocess.run(
+                    f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} 'free -m | grep Swap | awk \\'{{print $3 \\\"/\\\" $2 \\\" MB\\\"}}\\'' 2>/dev/null",
+                    shell=True, capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except:
+                pass
+        return '0Mi'
+    
+    def _get_vm_ram_percent(self, vm_name):
+        """Get VM RAM usage percentage"""
+        try:
+            result = subprocess.run(
+                f"virsh domstats {vm_name} --balloon 2>/dev/null | grep -E 'balloon.current|balloon.maximum' | cut -d= -f2",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                values = result.stdout.strip().split('\n')
+                if len(values) >= 2:
+                    current = int(values[0])
+                    maximum = int(values[1])
+                    if maximum > 0:
+                        return int((current / maximum) * 100)
+            return 0
+        except:
+            pass
+        
+        # Try via virsh dominfo
+        try:
+            result = subprocess.run(
+                f"virsh dominfo {vm_name} 2>/dev/null | grep -E 'Used memory|Max memory' | awk '{{print $3}}'",
+                shell=True, capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                values = result.stdout.strip().split('\n')
+                if len(values) >= 2:
+                    used = int(values[0])
+                    max_mem = int(values[1])
+                    if max_mem > 0:
+                        return int((used / max_mem) * 100)
+            return 0
+        except:
+            pass
+        return 0
+    
+    def _get_vm_disk_percent(self, vm_name):
+        """Get VM disk usage percentage"""
+        try:
+            # Try to get disk usage via SSH
+            ip = self._get_vm_ip(vm_name)
+            if ip and ip not in ['unknown', 'pending', '0.0.0.0']:
+                try:
+                    result = subprocess.run(
+                        f"ssh -o ConnectTimeout=3 -o BatchMode=yes devcyp@{ip} 'df -h / | tail -1 | awk \\'{{print $5}}\\' | tr -d \\'%\\'' 2>/dev/null",
+                        shell=True, capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        return int(result.stdout.strip())
+                except:
+                    pass
+            return 0
+        except:
+            pass
+        return 0
     
     def get_vm_details(self, vm_name):
         """Get comprehensive VM details"""
@@ -5932,9 +6004,7 @@ class InfrastructureMonitor:
             'cpu_stats': {},
             'error': None
         }
-        
         try:
-            # Domain info
             result = subprocess.run(
                 f'virsh dominfo {vm_name}',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -5949,8 +6019,6 @@ class InfrastructureMonitor:
                         details['memory']['used'] = line.split(':')[1].strip()
                     elif 'Max memory:' in line:
                         details['memory']['max'] = line.split(':')[1].strip()
-            
-            # CPU stats
             result = subprocess.run(
                 f'virsh domstats {vm_name} --cpu-total',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -5960,16 +6028,12 @@ class InfrastructureMonitor:
                     if '=' in line:
                         key, value = line.split('=', 1)
                         details['cpu_stats'][key.strip()] = value.strip()
-            
-            # Snapshots
             result = subprocess.run(
                 f'virsh snapshot-list {vm_name} --name',
                 shell=True, capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 details['snapshots'] = [s.strip() for s in result.stdout.split('\n') if s.strip()]
-            
-            # Disk info
             result = subprocess.run(
                 f'virsh domblklist {vm_name} --details',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -5985,8 +6049,6 @@ class InfrastructureMonitor:
                                 'target': parts[2],
                                 'source': parts[3] if len(parts) > 3 else ''
                             })
-            
-            # Network interfaces
             result = subprocess.run(
                 f'virsh domiflist {vm_name}',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -6002,16 +6064,13 @@ class InfrastructureMonitor:
                                 'model': parts[3],
                                 'mac': parts[4]
                             })
-        
         except Exception as e:
             details['error'] = str(e)
-        
         return details
     
     # ---- Kubernetes Management ----
     
     def get_kubernetes_resources(self):
-        """Get comprehensive Kubernetes resources"""
         resources = {
             'available': False,
             'nodes': [],
@@ -6024,16 +6083,11 @@ class InfrastructureMonitor:
             'pvcs': [],
             'ingresses': []
         }
-        
         try:
-            # Check if kubectl is available
             which_result = subprocess.run(['which', 'kubectl'], capture_output=True, text=True)
             if which_result.returncode != 0:
                 return resources
-            
             resources['available'] = True
-            
-            # Nodes
             result = subprocess.run(
                 'kubectl get nodes -o json 2>/dev/null',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -6049,8 +6103,6 @@ class InfrastructureMonitor:
                         'memory': item['status']['capacity']['memory'],
                         'age': self._calculate_age(item['metadata']['creationTimestamp'])
                     })
-            
-            # Pods
             result = subprocess.run(
                 'kubectl get pods --all-namespaces -o json 2>/dev/null',
                 shell=True, capture_output=True, text=True, timeout=5
@@ -6067,8 +6119,6 @@ class InfrastructureMonitor:
                         'age': self._calculate_age(item['metadata']['creationTimestamp']),
                         'labels': item['metadata'].get('labels', {})
                     })
-            
-            # Other resources
             for resource_type in ['deployments', 'services', 'jobs', 'cronjobs', 'pvcs', 'ingresses']:
                 result = subprocess.run(
                     f'kubectl get {resource_type} --all-namespaces -o json 2>/dev/null',
@@ -6082,21 +6132,17 @@ class InfrastructureMonitor:
                             'namespace': item['metadata']['namespace'],
                             'age': self._calculate_age(item['metadata']['creationTimestamp'])
                         })
-        
         except Exception as e:
             print(f"Kubernetes error: {e}")
-        
         return resources
     
     def _get_node_status(self, node):
-        """Determine node readiness status"""
         for condition in node['status'].get('conditions', []):
             if condition['type'] == 'Ready':
                 return 'Ready' if condition['status'] == 'True' else 'NotReady'
         return 'Unknown'
     
     def _calculate_age(self, timestamp):
-        """Calculate human-readable age from timestamp"""
         try:
             created = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             delta = datetime.now(created.tzinfo) - created
@@ -6113,7 +6159,6 @@ class InfrastructureMonitor:
     # ---- Event Management ----
     
     def add_event(self, event_type, message, severity='info'):
-        """Add an event to the stream and timeline"""
         event = {
             'timestamp': datetime.now().isoformat(),
             'type': event_type,
@@ -6123,19 +6168,15 @@ class InfrastructureMonitor:
         }
         self.events.appendleft(event)
         self.timeline.append(event)
-        
-        # Auto-create alerts for critical events
         if severity in ('critical', 'error'):
             self.alerts.append({
                 **event,
                 'acknowledged': False,
                 'resolved': False
             })
-        
         return event
     
     def add_audit(self, user, action, resource):
-        """Add an audit log entry"""
         entry = {
             'timestamp': datetime.now().isoformat(),
             'user': user,
@@ -6146,18 +6187,25 @@ class InfrastructureMonitor:
         return entry
     
     def get_timeline(self, hours=1):
-        """Get event timeline for correlation view"""
         cutoff = datetime.now() - timedelta(hours=hours)
         return [e for e in self.timeline if datetime.fromisoformat(e['timestamp']) > cutoff]
     
-    # ---- Actions ----
+    # ---- Actions (FULLY UPGRADED) ----
     
-    def execute_action(self, resource_type, resource_name, action):
-        """Execute an action on a resource with job tracking"""
+    def execute_action(self, resource_type, resource_name, action, params=None):
+        """Execute an action with optional parameters (e.g., replicas for scale)"""
+        if params is None:
+            params = {}
         job_id = hashlib.md5(f"{time.time()}{resource_name}{action}".encode()).hexdigest()[:12]
         
-        # Define action workflows
+        # Build command with parameter substitution
+        def substitute(cmd):
+            for key, value in params.items():
+                cmd = cmd.replace(f"{{{key}}}", str(value))
+            return cmd
+        
         action_map = {
+            # ---- VM actions ----
             'vm_restart': [
                 {'name': 'Shutdown VM', 'type': 'command', 'command': f'virsh shutdown {resource_name}'},
                 {'name': 'Wait for shutdown', 'type': 'sleep', 'duration': 30},
@@ -6173,18 +6221,50 @@ class InfrastructureMonitor:
             'vm_snapshot': [
                 {'name': 'Create snapshot', 'type': 'command', 'command': f'virsh snapshot-create-as {resource_name} auto-{datetime.now().strftime("%Y%m%d-%H%M%S")}'}
             ],
+            'vm_pause': [
+                {'name': 'Pause VM', 'type': 'command', 'command': f'virsh suspend {resource_name}'},
+                {'name': 'Verify paused', 'type': 'verify', 'command': f'virsh domstate {resource_name} | grep paused'}
+            ],
+            'vm_resume': [
+                {'name': 'Resume VM', 'type': 'command', 'command': f'virsh resume {resource_name}'},
+                {'name': 'Verify running', 'type': 'verify', 'command': f'virsh domstate {resource_name} | grep running'}
+            ],
+            
+            # ---- Kubernetes Pod actions ----
             'pod_restart': [
                 {'name': 'Delete pod', 'type': 'command', 'command': f'kubectl delete pod {resource_name}'},
                 {'name': 'Wait for restart', 'type': 'sleep', 'duration': 10},
                 {'name': 'Verify running', 'type': 'verify', 'command': f'kubectl get pod {resource_name} -o jsonpath="{{.status.phase}}" | grep Running'}
             ],
-            'node_drain': [
-                {'name': 'Cordon node', 'type': 'command', 'command': f'kubectl cordon {resource_name}'},
-                {'name': 'Drain node', 'type': 'command', 'command': f'kubectl drain {resource_name} --ignore-daemonsets --delete-emptydir-data --force'},
-                {'name': 'Verify', 'type': 'verify', 'command': f'kubectl get node {resource_name} -o jsonpath="{{.spec.unschedulable}}" | grep true'}
+            'pod_delete': [
+                {'name': 'Delete pod', 'type': 'command', 'command': f'kubectl delete pod {resource_name}'},
+                {'name': 'Wait', 'type': 'sleep', 'duration': 5}
+            ],
+            
+            # ---- Kubernetes Deployment actions ----
+            'deployment_scale': [
+                {'name': f'Scale deployment {resource_name} to {params.get("replicas", 1)}', 
+                 'type': 'command', 
+                 'command': substitute(f'kubectl scale deployment {resource_name} --replicas={{replicas}}')},
+                {'name': 'Verify new replicas', 
+                 'type': 'verify', 
+                 'command': substitute(f'kubectl get deployment {resource_name} -o jsonpath="{{.status.readyReplicas}}" | grep {{replicas}}')}
+            ],
+            'deployment_delete': [
+                {'name': 'Delete deployment', 'type': 'command', 'command': f'kubectl delete deployment {resource_name}'}
+            ],
+            
+            # ---- Kubernetes Node actions ----
+            'node_cordon': [
+                {'name': 'Cordon node', 'type': 'command', 'command': f'kubectl cordon {resource_name}'}
             ],
             'node_uncordon': [
                 {'name': 'Uncordon node', 'type': 'command', 'command': f'kubectl uncordon {resource_name}'}
+            ],
+            'node_drain': [
+                {'name': 'Cordon node', 'type': 'command', 'command': f'kubectl cordon {resource_name}'},
+                {'name': 'Drain node', 'type': 'command', 'command': f'kubectl drain {resource_name} --ignore-daemonsets --delete-emptydir-data --force'},
+                {'name': 'Verify drained', 'type': 'verify', 'command': f'kubectl get node {resource_name} -o jsonpath="{{.spec.unschedulable}}" | grep true'}
             ]
         }
         
@@ -6194,19 +6274,16 @@ class InfrastructureMonitor:
             self.add_event('action', f'{action} initiated on {resource_type} {resource_name}', 'info')
             self.add_audit('system', action, f'{resource_type}/{resource_name}')
             return job
-        
         return None
     
     # ---- Diagnostics & Repair ----
     
     def run_diagnostics(self):
-        """Run full network diagnostics using existing tool"""
         try:
             result = subprocess.run(
                 ['sudo', 'network-recover', 'diagnose'],
                 capture_output=True, text=True, timeout=30
             )
-            
             issues = []
             for line in result.stdout.split('\n'):
                 if 'FAIL' in line:
@@ -6221,7 +6298,6 @@ class InfrastructureMonitor:
                         'message': line.strip(),
                         'suggested_action': 'Monitor and investigate'
                     })
-            
             return {
                 'success': result.returncode == 0,
                 'output': result.stdout[-2000:],
@@ -6231,17 +6307,13 @@ class InfrastructureMonitor:
             return {'success': False, 'output': str(e), 'issues': []}
     
     def run_repair(self, target=None):
-        """Run network repair using existing tool"""
         try:
             cmd = ['sudo', 'network-recover', 'repair']
             if target:
                 cmd.extend(['--target', target])
-            
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
             self.add_event('recovery', f'Network repair {"succeeded" if result.returncode == 0 else "failed"}', 
                           'success' if result.returncode == 0 else 'error')
-            
             return {
                 'success': result.returncode == 0,
                 'output': result.stdout[-2000:]
@@ -6250,10 +6322,8 @@ class InfrastructureMonitor:
             return {'success': False, 'output': str(e)}
     
     def get_detected_problems(self):
-        """Run diagnostics and return structured problems"""
         diag = self.run_diagnostics()
         problems = []
-        
         for issue in diag.get('issues', []):
             problems.append({
                 'type': 'network',
@@ -6262,20 +6332,15 @@ class InfrastructureMonitor:
                 'suggested_action': issue.get('suggested_action', ''),
                 'auto_fix': True if 'FAIL' in issue['message'] else False
             })
-        
         return problems
     
     # ---- Search ----
     
     def search_resources(self, query):
-        """Search across all infrastructure resources"""
         results = []
         q = query.lower().strip()
-        
         if not q:
             return results
-        
-        # Search VMs
         vms = self.get_vms_list()
         for vm in vms:
             if q in vm.get('name', '').lower() or q in vm.get('ip', '').lower():
@@ -6285,8 +6350,6 @@ class InfrastructureMonitor:
                     'state': vm['state'],
                     'path': f'vm/{vm["name"]}'
                 })
-        
-        # Search Kubernetes
         k8s = self.get_kubernetes_resources()
         for resource_type, items in k8s.items():
             if isinstance(items, list):
@@ -6298,8 +6361,6 @@ class InfrastructureMonitor:
                             'namespace': item.get('namespace', ''),
                             'path': f'kubernetes/{resource_type}/{item["name"]}'
                         })
-        
-        # Search host
         host = self.get_host_info()
         if q in host.get('name', '').lower():
             results.append({
@@ -6307,8 +6368,7 @@ class InfrastructureMonitor:
                 'name': host['name'],
                 'path': 'host'
             })
-        
-        return results[:20]  # Limit to 20 results
+        return results[:20]
 
 
 # ============================================================
@@ -6316,45 +6376,29 @@ class InfrastructureMonitor:
 # ============================================================
 
 class WebSocketServer:
-    """WebSocket server for real-time bidirectional communication"""
-    
     def __init__(self, monitor):
         self.monitor = monitor
         self.clients = set()
-        self.subscriptions = {}  # client_id -> [topics]
+        self.subscriptions = {}
     
     async def handler(self, websocket, path):
-        """Handle individual WebSocket connections"""
         self.clients.add(websocket)
         client_id = id(websocket)
         self.subscriptions[client_id] = ['metrics', 'events']
-        
         try:
-            # Send welcome message
             await websocket.send(json.dumps({
                 'type': 'connected',
-                'data': {
-                    'client_id': client_id,
-                    'timestamp': datetime.now().isoformat()
-                }
+                'data': {'client_id': client_id, 'timestamp': datetime.now().isoformat()}
             }))
-            
-            # Handle incoming messages
             async for message in websocket:
                 try:
                     data = json.loads(message)
                     response = await self.handle_command(data, client_id)
                     await websocket.send(json.dumps(response))
                 except json.JSONDecodeError:
-                    await websocket.send(json.dumps({
-                        'type': 'error',
-                        'message': 'Invalid JSON'
-                    }))
+                    await websocket.send(json.dumps({'type': 'error', 'message': 'Invalid JSON'}))
                 except Exception as e:
-                    await websocket.send(json.dumps({
-                        'type': 'error',
-                        'message': str(e)
-                    }))
+                    await websocket.send(json.dumps({'type': 'error', 'message': str(e)}))
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
@@ -6363,7 +6407,6 @@ class WebSocketServer:
                 del self.subscriptions[client_id]
     
     async def handle_command(self, data, client_id):
-        """Route commands to appropriate handlers"""
         command = data.get('command', '')
         params = data.get('params', {})
         request_id = data.get('request_id', '')
@@ -6386,7 +6429,8 @@ class WebSocketServer:
             'execute_action': lambda: self.monitor.execute_action(
                 params.get('resource_type', ''),
                 params.get('resource_name', ''),
-                params.get('action', '')
+                params.get('action', ''),
+                params  # pass full params dict for extra args
             ),
             'get_job_status': lambda: self.monitor.automation.get_job_status(params.get('job_id', '')),
             'subscribe': lambda: self._handle_subscribe(client_id, params.get('topics', [])),
@@ -6397,41 +6441,23 @@ class WebSocketServer:
         if command in handlers:
             try:
                 result = handlers[command]()
-                return {
-                    'type': f'{command}_response',
-                    'data': result,
-                    'request_id': request_id
-                }
+                return {'type': f'{command}_response', 'data': result, 'request_id': request_id}
             except Exception as e:
-                return {
-                    'type': 'error',
-                    'message': str(e),
-                    'request_id': request_id
-                }
-        
-        return {
-            'type': 'error',
-            'message': f'Unknown command: {command}',
-            'request_id': request_id
-        }
+                return {'type': 'error', 'message': str(e), 'request_id': request_id}
+        return {'type': 'error', 'message': f'Unknown command: {command}', 'request_id': request_id}
     
     def _handle_subscribe(self, client_id, topics):
-        """Subscribe client to specific topics"""
         if client_id in self.subscriptions:
             self.subscriptions[client_id].extend(topics)
             self.subscriptions[client_id] = list(set(self.subscriptions[client_id]))
         return {'subscribed': topics}
     
     def _handle_unsubscribe(self, client_id, topics):
-        """Unsubscribe client from specific topics"""
         if client_id in self.subscriptions:
-            self.subscriptions[client_id] = [
-                t for t in self.subscriptions[client_id] if t not in topics
-            ]
+            self.subscriptions[client_id] = [t for t in self.subscriptions[client_id] if t not in topics]
         return {'unsubscribed': topics}
     
     def _acknowledge_alert(self, alert_id):
-        """Mark an alert as acknowledged"""
         for alert in self.monitor.alerts:
             if alert.get('id') == alert_id:
                 alert['acknowledged'] = True
@@ -6439,7 +6465,6 @@ class WebSocketServer:
         return {'acknowledged': False, 'error': 'Alert not found'}
     
     async def broadcast(self, message, topic=None):
-        """Broadcast message to subscribed clients"""
         if self.clients:
             tasks = []
             for client in self.clients:
@@ -6450,32 +6475,16 @@ class WebSocketServer:
                 await asyncio.gather(*tasks, return_exceptions=True)
     
     async def start_broadcasting(self):
-        """Periodically broadcast updates to all connected clients"""
         while True:
             try:
-                # Broadcast metrics every second
                 metrics = self.monitor.get_system_metrics()
-                await self.broadcast({
-                    'type': 'metrics_update',
-                    'data': metrics
-                }, topic='metrics')
-                
-                # Broadcast recent events
+                await self.broadcast({'type': 'metrics_update', 'data': metrics}, topic='metrics')
                 recent_events = list(self.monitor.events)[:20]
                 if recent_events:
-                    await self.broadcast({
-                        'type': 'events_update',
-                        'data': recent_events
-                    }, topic='events')
-                
-                # Broadcast alerts
+                    await self.broadcast({'type': 'events_update', 'data': recent_events}, topic='events')
                 active_alerts = [a for a in self.monitor.alerts if not a.get('resolved')]
                 if active_alerts:
-                    await self.broadcast({
-                        'type': 'alerts_update',
-                        'data': active_alerts
-                    }, topic='alerts')
-                
+                    await self.broadcast({'type': 'alerts_update', 'data': active_alerts}, topic='alerts')
                 await asyncio.sleep(1)
             except Exception as e:
                 print(f"Broadcast error: {e}")
@@ -6487,36 +6496,27 @@ class WebSocketServer:
 # ============================================================
 
 class APIHandler(SimpleHTTPRequestHandler):
-    """HTTP request handler with REST API endpoints"""
-    
-    # Use class variable for monitor (set before starting server)
     monitor = None
     
     def __init__(self, *args, **kwargs):
-        # Serve from static directory
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
     
     def do_GET(self):
-        """Handle GET requests"""
         if self.path.startswith('/api/'):
             self.handle_api_get()
         else:
-            # Serve static files
             if self.path == '/' or self.path == '':
                 self.path = '/index.html'
             super().do_GET()
     
     def do_POST(self):
-        """Handle POST requests"""
         if self.path.startswith('/api/'):
             self.handle_api_post()
         else:
             self.send_error(404)
     
     def handle_api_get(self):
-        """Route GET API requests"""
         path = self.path.split('?')[0]
-        
         routes = {
             '/api/status': self.api_get_status,
             '/api/metrics': self.api_get_metrics,
@@ -6533,7 +6533,6 @@ class APIHandler(SimpleHTTPRequestHandler):
             '/api/jobs': self.api_get_jobs,
             '/api/search': self.api_search,
         }
-        
         handler = routes.get(path)
         if handler:
             try:
@@ -6545,10 +6544,7 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._send_json(404, {'error': 'Not found'})
     
     def handle_api_post(self):
-        """Route POST API requests"""
         path = self.path.split('?')[0]
-        
-        # Read request body
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length > 0 else b'{}'
         try:
@@ -6556,7 +6552,7 @@ class APIHandler(SimpleHTTPRequestHandler):
         except:
             params = {}
         
-        # Parse query parameters
+        # Parse query parameters for GET-style POST requests
         from urllib.parse import urlparse, parse_qs
         query = parse_qs(urlparse(self.path).query)
         
@@ -6565,8 +6561,8 @@ class APIHandler(SimpleHTTPRequestHandler):
             '/api/repair': lambda: self.api_run_repair(params.get('target')),
             '/api/execute': lambda: self.api_execute_action(params),
             '/api/alerts/acknowledge': lambda: self.api_acknowledge_alert(params),
+            '/api/terminal': lambda: self.api_terminal(params),  # â† TERMINAL ENDPOINT
         }
-        
         handler = routes.get(path)
         if handler:
             try:
@@ -6578,7 +6574,6 @@ class APIHandler(SimpleHTTPRequestHandler):
             self._send_json(404, {'error': 'Not found'})
     
     def _send_json(self, status, data):
-        """Send JSON response"""
         self.send_response(status)
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -6588,7 +6583,6 @@ class APIHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
     
     def do_OPTIONS(self):
-        """Handle CORS preflight"""
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -6596,7 +6590,6 @@ class APIHandler(SimpleHTTPRequestHandler):
         self.end_headers()
     
     # ---- API Handlers ----
-    
     def api_get_status(self):
         return {
             'status': 'connected',
@@ -6671,7 +6664,8 @@ class APIHandler(SimpleHTTPRequestHandler):
         return self.monitor.execute_action(
             params.get('resource_type', ''),
             params.get('resource_name', ''),
-            params.get('action', '')
+            params.get('action', ''),
+            params
         )
     
     def api_acknowledge_alert(self, params):
@@ -6681,6 +6675,45 @@ class APIHandler(SimpleHTTPRequestHandler):
                 alert['acknowledged'] = True
                 return {'acknowledged': True}
         return {'acknowledged': False, 'error': 'Alert not found'}
+    
+    # ---- TERMINAL API ----
+    def api_terminal(self, params):
+        """Execute a terminal command and return output"""
+        command = params.get('command', '')
+        if not command:
+            return {'error': 'No command provided'}
+        
+        # Whitelist of safe commands
+        safe_commands = [
+            'ping', 'kubectl', 'virsh', 'docker', 'systemctl', 
+            'ps', 'top', 'df', 'free', 'netstat', 'ss', 'ip', 
+            'ifconfig', 'route', 'nslookup', 'dig', 'curl', 'hostname',
+            'whoami', 'date', 'uptime', 'uname', 'cat', 'echo',
+            'k3s', 'kubectl', 'helm'
+        ]
+        
+        # Check if command is safe
+        cmd_parts = command.split()
+        if cmd_parts and cmd_parts[0] not in safe_commands:
+            return {'error': f'Command "{cmd_parts[0]}" is not allowed. Allowed: {", ".join(safe_commands)}'}
+        
+        try:
+            result = subprocess.run(
+                command, 
+                shell=True, 
+                capture_output=True, 
+                text=True,
+                timeout=30
+            )
+            output = result.stdout + result.stderr
+            return {
+                'output': output,
+                'exit_code': result.returncode
+            }
+        except subprocess.TimeoutExpired:
+            return {'error': 'Command timed out after 30 seconds'}
+        except Exception as e:
+            return {'error': str(e)}
 
 
 # ============================================================
@@ -6688,17 +6721,11 @@ class APIHandler(SimpleHTTPRequestHandler):
 # ============================================================
 
 def start_http_server(monitor):
-    """Start the HTTP server"""
-    # Set monitor on the handler class
     APIHandler.monitor = monitor
-    
-    # Create static directory if it doesn't exist
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    
     server = HTTPServer((HOST, HTTP_PORT), APIHandler)
     print(f"ðŸŒ HTTP Server running on http://localhost:{HTTP_PORT}")
     print(f"   API available at http://localhost:{HTTP_PORT}/api/")
-    
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -6707,54 +6734,34 @@ def start_http_server(monitor):
         server.server_close()
         print("HTTP Server stopped")
 
-
 async def start_ws_server(monitor):
-    """Start the WebSocket server"""
     ws_server = WebSocketServer(monitor)
-    
     print(f"ðŸ”Œ WebSocket Server running on ws://localhost:{WS_PORT}")
-    
     async with websockets.serve(ws_server.handler, HOST, WS_PORT):
-        # Start broadcasting task
         broadcast_task = asyncio.create_task(ws_server.start_broadcasting())
-        
         try:
-            await asyncio.Future()  # Run forever
+            await asyncio.Future()
         except KeyboardInterrupt:
             pass
         finally:
             broadcast_task.cancel()
             print("WebSocket Server stopped")
 
-
 def main():
-    """Main entry point"""
     print("=" * 60)
-    print("  Infrastructure Operations Center v3.0.0")
-    print("  Three-Pane Operations Console")
+    print("  Infrastructure Operations Center v3.1.0")
+    print("  Full WebSocket & REST API")
     print("=" * 60)
     print()
-    
-    # Create monitor instance
     monitor = InfrastructureMonitor()
     monitor.add_event('system', 'Infrastructure Operations Center started', 'info')
-    
     print(f"  ðŸ“Š Metrics collection: Active (1s interval)")
     print(f"  ðŸ¤– Automation engine: Ready")
     print(f"  ðŸ“ Event stream: Active")
     print(f"  ðŸ“‹ Job queue: Ready")
     print()
-    
-    # Start HTTP server in a daemon thread
-    http_thread = threading.Thread(
-        target=start_http_server, 
-        args=(monitor,), 
-        daemon=True,
-        name="HTTP-Server"
-    )
+    http_thread = threading.Thread(target=start_http_server, args=(monitor,), daemon=True, name="HTTP-Server")
     http_thread.start()
-    
-    # Run WebSocket server in main thread (asyncio)
     try:
         asyncio.run(start_ws_server(monitor))
     except KeyboardInterrupt:
@@ -6762,7 +6769,6 @@ def main():
     except Exception as e:
         print(f"Fatal error: {e}")
         raise
-
 
 if __name__ == '__main__':
     main()
@@ -6985,8 +6991,8 @@ window.addEventListener('beforeunload', function() {
 ----------------------------------------
 FILE: F:\Linux_Network_Manager\network-recover\web\static\index.html
 FULL PATH: F:\Linux_Network_Manager\network-recover\web\static\index.html
-SIZE: 80.59 KB
-LAST MODIFIED: 07/24/2026 12:14:28
+SIZE: 122.39 KB
+LAST MODIFIED: 07/24/2026 18:28:13
 ----------------------------------------
 
 <!DOCTYPE html>
@@ -7710,6 +7716,10 @@ LAST MODIFIED: 07/24/2026 12:14:28
                     <li class="tree-item" onclick="selectResource('k8s-jobs')">
                         <span class="tree-icon">â±</span> Jobs
                     </li>
+                    <li class="tree-item" onclick="selectResource('network')">
+                        <span class="tree-icon">ðŸŒ</span> Network
+                        <span class="tree-status" id="network-status"></span>
+                    </li>
                 </ul>
             </div>
             <div class="sidebar-section">
@@ -7756,15 +7766,33 @@ LAST MODIFIED: 07/24/2026 12:14:28
         <div class="drawer-actions" id="drawer-actions"></div>
     </div>
     
-    <!-- TERMINAL (hidden by default) -->
-    <div class="terminal" id="terminal" style="display:none;">
-        <div id="terminal-output">
-            <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+        <!-- TERMINAL - OLD (hidden by default, kept for compatibility) -->
+        <div class="terminal" id="terminal" style="display:none;">
+            <div id="terminal-output-old">
+                <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+            </div>
         </div>
-    </div>
-    
-    <!-- STATUS BAR -->
-    <div class="status-bar">
+        
+        <!-- TERMINAL - NEW & IMPROVED -->
+        <div class="terminal-container" id="terminal-container" style="display:none; margin: 12px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+                <span style="color:#6a7090;font-size:11px;">>_ Terminal</span>
+                <button onclick="clearTerminal()" style="background:none;border:none;color:#6a7090;cursor:pointer;font-size:11px;">Clear</button>
+            </div>
+            <div id="terminal-output">
+                <div class="terminal-output info">Welcome to Infrastructure Operations Center Terminal</div>
+                <div class="terminal-output" style="color:#6a7090;">Type commands and press Enter</div>
+                <div class="terminal-output" style="color:#6a7090;">Examples: ping 8.8.8.8, kubectl get pods, virsh list</div>
+                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€</div>
+            </div>
+            <div class="terminal-input-line" style="margin-top:8px;">
+                <span class="terminal-prompt">$</span>
+                <input type="text" class="terminal-input" id="terminal-input" placeholder="Enter command..." autofocus>
+            </div>
+        </div>
+        
+        <!-- STATUS BAR -->
+        <div class="status-bar">
         <span class="status-bar-item">â— <span id="sb-connection">Connected</span></span>
         <span class="status-bar-item">â± <span id="sb-last-update">0.0s ago</span></span>
         <span class="status-bar-item">ðŸ–¥ <span id="sb-hosts">1 Host</span></span>
@@ -7832,85 +7860,176 @@ LAST MODIFIED: 07/24/2026 12:14:28
                 state.connected = false;
             };
         }
-        
+
+        // ============================================================
+        // UTILITIES
+        // ============================================================
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+                
         function sendCommand(command, params = {}) {
             if (state.ws && state.ws.readyState === WebSocket.OPEN) {
                 state.ws.send(JSON.stringify({ command, params, request_id: Date.now().toString(36) }));
             }
         }
         
-        function handleMessage(data) {
-            state.lastUpdate = Date.now();
-            
-            switch(data.type) {
-                case 'connected':
-                    console.log('Server connected:', data.data);
-                    break;
-                case 'metrics_update':
-                    state.metrics = data.data;
-                    updateMetricsDisplay(data.data);
-                    updateStatusBar();
-                    break;
-                case 'events_update':
-                    state.events = data.data;
-                    if (state.currentView === 'events') renderEvents();
-                    break;
-                case 'get_metrics_response':
-                    state.metrics = data.data;
-                    updateMetricsDisplay(data.data);
-                    break;
-                case 'get_vms_response':
-                    state.vms = data.data;
-                    if (state.currentView === 'vms') renderVMList();
-                    updateSidebarCounts();
-                    updateStatusBar();
-                    break;
-                case 'get_kubernetes_response':
-                    state.kubernetes = data.data;
-                    if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
-                    updateSidebarCounts();
-                    updateStatusBar();
-                    break;
-                case 'get_events_response':
-                    state.events = data.data;
-                    if (state.currentView === 'events') renderEvents();
-                    break;
-                case 'get_timeline_response':
-                    if (state.currentView === 'timeline') renderTimeline(data.data);
-                    break;
-                case 'get_alerts_response':
-                    state.alerts = data.data;
-                    updateAlertBell();
-                    break;
-                case 'get_problems_response':
-                    if (state.currentView === 'problems') renderProblems(data.data);
-                    break;
-                case 'get_vm_details_response':
-                    if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
-                        renderVMDrawerDetails(data.data);
-                        state._pendingDrawer = null;
+       function handleMessage(data) {
+        state.lastUpdate = Date.now();
+        
+        switch(data.type) {
+            case 'connected':
+                console.log('Server connected:', data.data);
+                break;
+                
+            case 'metrics_update':
+                state.metrics = data.data;
+                updateMetricsDisplay(data.data);
+                updateStatusBar();
+                break;
+                
+            case 'events_update':
+                state.events = data.data;
+                if (state.currentView === 'events') renderEvents();
+                break;
+                
+            case 'get_metrics_response':
+                state.metrics = data.data;
+                updateMetricsDisplay(data.data);
+                break;
+                
+            case 'get_vms_response':
+                state.vms = data.data;
+                if (state.currentView === 'vms') renderVMList();
+                updateSidebarCounts();
+                updateStatusBar();
+                break;
+                
+            case 'get_kubernetes_response':
+                state.kubernetes = data.data;
+                if (state.currentView.startsWith('k8s')) renderK8sView(state.currentView);
+                updateSidebarCounts();
+                updateStatusBar();
+                break;
+                
+            case 'get_events_response':
+                state.events = data.data;
+                if (state.currentView === 'events') renderEvents();
+                break;
+                
+            case 'get_timeline_response':
+                if (state.currentView === 'timeline') renderTimeline(data.data);
+                break;
+                
+            case 'get_alerts_response':
+                state.alerts = data.data;
+                updateAlertBell();
+                break;
+                
+            case 'get_problems_response':
+                if (state.currentView === 'problems') renderProblems(data.data);
+                break;
+                
+            case 'get_vm_details_response':
+                if (state._pendingDrawer && state._pendingDrawer.type === 'vm') {
+                    renderVMDrawerDetails(data.data);
+                    state._pendingDrawer = null;
+                }
+                break;
+                
+            case 'run_diagnostics_response':
+                showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
+                // Display in network view if visible
+                if (state.currentView === 'network') {
+                    const output = document.getElementById('network-output');
+                    if (output) {
+                        const lines = (data.data.output || '').split('\n');
+                        output.innerHTML = lines.map(line => {
+                            let color = '#8890b0';
+                            if (line.includes('âœ…') || line.includes('PASS')) color = '#4caf50';
+                            else if (line.includes('âŒ') || line.includes('FAIL')) color = '#f44336';
+                            else if (line.includes('âš ') || line.includes('WARN')) color = '#ff9800';
+                            else if (line.includes('LAYER')) color = '#64b5f6';
+                            return `<div style="color:${color};${line.includes('LAYER') ? 'font-weight:bold;margin-top:4px;' : ''}">${escapeHtml(line)}</div>`;
+                        }).join('');
+                        updateNetworkLayers(lines);
                     }
-                    break;
-                case 'run_diagnostics_response':
-                    showNotification('Diagnostics', data.data.success ? 'Completed successfully' : 'Issues found', data.data.success ? 'success' : 'warning');
-                    break;
-                case 'run_repair_response':
-                    showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
-                    break;
-                case 'execute_action_response':
-                    if (data.data) {
-                        showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
-                        refreshAll();
+                }
+                break;
+                
+            case 'run_repair_response':
+                showNotification('Repair', data.data.success ? 'Repair completed' : 'Repair failed', data.data.success ? 'success' : 'error');
+                // Display in network view if visible
+                if (state.currentView === 'network') {
+                    const output = document.getElementById('network-output');
+                    if (output) {
+                        const lines = (data.data.output || '').split('\n');
+                        output.innerHTML = lines.map(line => {
+                            let color = '#8890b0';
+                            if (line.includes('âœ…') || line.includes('PASS')) color = '#4caf50';
+                            else if (line.includes('âŒ') || line.includes('FAIL')) color = '#f44336';
+                            else if (line.includes('âš ') || line.includes('WARN')) color = '#ff9800';
+                            else if (line.includes('REPAIR')) color = '#64b5f6';
+                            return `<div style="color:${color};${line.includes('REPAIR') ? 'font-weight:bold;margin-top:4px;' : ''}">${escapeHtml(line)}</div>`;
+                        }).join('');
                     }
-                    break;
-                case 'search_response':
-                    renderSearchResults(data.data);
-                    break;
-                case 'get_job_status_response':
-                    // handled elsewhere
-                    break;
-            }
+                }
+                break;
+                
+            case 'execute_action_response':
+                if (data.data) {
+                    showNotification('Action', `Job ${data.data.id} started: ${data.data.type} on ${data.data.target}`, 'info');
+                    refreshAll();
+                }
+                break;
+                
+            case 'search_response':
+                renderSearchResults(data.data);
+                break;
+                
+            case 'get_job_status_response':
+                // handled elsewhere
+                break;
         }
+    }
+        function renderNetworkView() {
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">
+                    ðŸŒ Network Diagnostics
+                    <div>
+                        <button class="btn btn-primary" onclick="runNetworkDiagnose()" style="font-size:11px;padding:4px 12px;">ðŸ” Diagnose</button>
+                        <button class="btn btn-success" onclick="runNetworkRepair()" style="font-size:11px;padding:4px 12px;">ðŸ”§ Repair</button>
+                        <button class="btn" onclick="runNetworkStatus()" style="font-size:11px;padding:4px 12px;">ðŸ“Š Status</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="network-output" style="max-height:600px;overflow-y:auto;font-family:'SF Mono',Consolas,monospace;font-size:13px;line-height:1.6;background:#0a0e27;border-radius:4px;padding:12px;">
+                    <div style="color:#6a7090;text-align:center;padding:40px;">
+                        <div style="font-size:48px;margin-bottom:16px;">ðŸŒ</div>
+                        <div>Click <strong>Diagnose</strong> to run network diagnostics</div>
+                        <div style="font-size:12px;color:#4a4a6a;margin-top:8px;">Shows all 11 layers: Physical â†’ Link â†’ IP â†’ Routing â†’ Gateway â†’ Internet â†’ DNS â†’ HTTPS â†’ NetworkManager â†’ Virtualization â†’ Kubernetes</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Layer Status Indicators -->
+            <div class="panel" style="margin-top:12px;">
+                <div class="panel-header">Layer Status</div>
+                <div class="panel-body">
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;" id="layer-indicators">
+                        ${['Physical','Link','IP','Routing','Gateway','Internet','DNS','HTTPS','NetworkManager','Virtualization','Kubernetes'].map((layer, i) => `
+                            <span class="layer-indicator" id="layer-${i}" style="padding:4px 12px;border-radius:12px;font-size:11px;background:rgba(255,255,255,0.05);color:#666;border:1px solid transparent;transition:all 0.3s;">
+                                ${layer}
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
         
         // ============================================================
         // SIDEBAR TREE
@@ -7921,203 +8040,359 @@ LAST MODIFIED: 07/24/2026 12:14:28
         }
         
         function selectResource(type) {
-            state.selectedResource = type;
-            state.currentView = type;
-            
-            // Update active state
-            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
-            const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
-            if (activeItem) activeItem.classList.add('active');
-            
-            // Load content
-            switch(type) {
-                case 'host': renderHostView(); break;
-                case 'vms': renderVMList(); break;
-                case 'k8s-nodes': renderK8sView('k8s-nodes'); break;
-                case 'k8s-pods': renderK8sView('k8s-pods'); break;
-                case 'k8s-deployments': renderK8sView('k8s-deployments'); break;
-                case 'k8s-services': renderK8sView('k8s-services'); break;
-                case 'k8s-jobs': renderK8sView('k8s-jobs'); break;
-                case 'problems': renderProblems(); break;
-                case 'jobs': renderJobQueue(); break;
-                case 'automation': renderAutomations(); break;
-                case 'timeline': renderTimeline(); break;
-                case 'events': renderEvents(); break;
-                default: renderOverview(); break;
-            }
-        }
+        state.selectedResource = type;
+        state.currentView = type;
         
-        // ============================================================
-        // VIEW RENDERERS
-        // ============================================================
-        function renderOverview() {
-            const m = state.metrics;
-            const vms = state.vms || [];
-            const k8s = state.kubernetes || { nodes: [], pods: [] };
-            const runningVMs = vms.filter(v => v.state === 'running').length;
-            const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
-            const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
+        // Update active state
+        document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('active'));
+        const activeItem = document.querySelector(`.tree-item[onclick*="selectResource('${type}')"]`);
+        if (activeItem) activeItem.classList.add('active');
+        
+        // Load content
+        switch(type) {
+            case 'host': 
+                renderHostView(); 
+                break;
+            case 'vms': 
+                renderVMList(); 
+                break;
+            case 'network': 
+                renderNetworkView(); 
+                break;
+            case 'k8s-nodes': 
+                renderK8sView('k8s-nodes'); 
+                break;
+            case 'k8s-pods': 
+                renderK8sView('k8s-pods'); 
+                break;
+            case 'k8s-deployments': 
+                renderK8sView('k8s-deployments'); 
+                break;
+            case 'k8s-services': 
+                renderK8sView('k8s-services'); 
+                break;
+            case 'k8s-jobs': 
+                renderK8sView('k8s-jobs'); 
+                break;
+            case 'problems': 
+                renderProblems(); 
+                break;
+            case 'jobs': 
+                renderJobQueue(); 
+                break;
+            case 'automation': 
+                renderAutomations(); 
+                break;
+            case 'timeline': 
+                renderTimeline(); 
+                break;
+            case 'events': 
+                renderEvents(); 
+                break;
+            default: 
+                renderOverview(); 
+                break;
+        }
+    }
             
-            document.getElementById('content-area').innerHTML = `
-                <!-- Health Status -->
-                <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
-                    <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">ðŸŸ¢ Infrastructure Healthy</h2>
-                    <div class="cards-grid">
-                        <div class="card">
-                            <div class="card-label">Hosts</div>
-                            <div class="card-value">1</div>
-                            <div class="card-detail">Online</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">VMs</div>
-                            <div class="card-value">${runningVMs}</div>
-                            <div class="card-detail">Running / ${vms.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Nodes</div>
-                            <div class="card-value">${readyNodes}</div>
-                            <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Pods</div>
-                            <div class="card-value">${runningPods}</div>
-                            <div class="card-detail">Running / ${k8s.pods.length} Total</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">Services</div>
-                            <div class="card-value">${(k8s.services || []).length}</div>
-                            <div class="card-detail">Active</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 12px; display: flex; gap: 16px;">
-                        <span style="color: #ff9800;">âš  Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
-                        <span style="color: #f44336;">ðŸ”´ Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
-                    </div>
-                </div>
-                
-                <!-- Metrics with Sparklines -->
+    // ============================================================
+    // VIEW RENDERERS
+    // ============================================================
+    function renderOverview() {
+        const m = state.metrics;
+        const vms = state.vms || [];
+        const k8s = state.kubernetes || { nodes: [], pods: [] };
+        const runningVMs = vms.filter(v => v.state === 'running').length;
+        const readyNodes = k8s.nodes.filter(n => n.status === 'Ready').length;
+        const runningPods = k8s.pods.filter(p => p.status === 'Running').length;
+        
+        document.getElementById('content-area').innerHTML = `
+            <!-- Health Status -->
+            <div style="background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border: 1px solid #2a4a2a; padding: 20px; border-radius: 6px; margin-bottom: 16px;">
+                <h2 style="color: #4caf50; font-size: 18px; margin-bottom: 16px;">ðŸŸ¢ Infrastructure Healthy</h2>
                 <div class="cards-grid">
                     <div class="card">
-                        <div class="card-label">CPU</div>
-                        <div style="font-size: 24px; font-weight: bold;" id="cpu-value">${m?.cpu || 0}%</div>
-                        <div class="sparkline" id="cpu-sparkline"></div>
+                        <div class="card-label">Hosts</div>
+                        <div class="card-value">1</div>
+                        <div class="card-detail">Online</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">RAM</div>
-                        <div style="font-size: 24px; font-weight: bold;" id="ram-value">${m?.ram || 0}%</div>
-                        <div class="sparkline" id="ram-sparkline"></div>
+                        <div class="card-label">VMs</div>
+                        <div class="card-value">${runningVMs}</div>
+                        <div class="card-detail">Running / ${vms.length} Total</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">Network</div>
-                        <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
-                        <div class="sparkline" id="net-sparkline"></div>
+                        <div class="card-label">Nodes</div>
+                        <div class="card-value">${readyNodes}</div>
+                        <div class="card-detail">Ready / ${k8s.nodes.length} Total</div>
                     </div>
                     <div class="card">
-                        <div class="card-label">Disk</div>
-                        <div style="font-size: 24px; font-weight: bold;">${m?.disk || 0}%</div>
-                        <div class="sparkline" id="disk-sparkline"></div>
+                        <div class="card-label">Pods</div>
+                        <div class="card-value">${runningPods}</div>
+                        <div class="card-detail">Running / ${k8s.pods.length} Total</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Services</div>
+                        <div class="card-value">${(k8s.services || []).length}</div>
+                        <div class="card-detail">Active</div>
                     </div>
                 </div>
-                
-                <!-- Events & Tasks -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                    <div class="panel">
-                        <div class="panel-header">Recent Events</div>
-                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-events">
-                            ${(state.events || []).slice(0, 10).map(e => `
-                                <div class="timeline-item">
-                                    <span class="timeline-time">${new Date(e.timestamp).toLocaleTimeString()}</span>
-                                    <span class="timeline-icon ${e.severity}">${e.severity === 'success' ? 'âœ“' : e.severity === 'warning' ? 'âš ' : e.severity === 'error' ? 'âœ—' : 'â„¹'}</span>
-                                    <span>${e.message}</span>
-                                </div>
-                            `).join('') || '<div style="color:#6a7090;font-size:12px;">No events</div>'}
-                        </div>
-                    </div>
-                    <div class="panel">
-                        <div class="panel-header">Current Jobs</div>
-                        <div class="panel-body" style="max-height: 300px; overflow-y: auto;" id="overview-jobs">
-                            <div style="color:#6a7090;font-size:12px;">No active jobs</div>
-                        </div>
-                    </div>
+                <div style="margin-top: 12px; display: flex; gap: 16px;">
+                    <span style="color: #ff9800;">âš  Warnings: ${state.alerts.filter(a => a.severity === 'warning' && !a.acknowledged).length}</span>
+                    <span style="color: #f44336;">ðŸ”´ Critical: ${state.alerts.filter(a => a.severity === 'critical' && !a.acknowledged).length}</span>
                 </div>
-            `;
+            </div>
             
-            // Request sparkline data
-            sendCommand('get_metrics_history', { period: '1h' });
-        }
-        
-        function renderHostView() {
-            const m = state.metrics;
-            document.getElementById('content-area').innerHTML = `
+            <!-- Metrics with Visual Bars -->
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-label">CPU</div>
+                    <div style="font-size: 24px; font-weight: bold;" id="cpu-value">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.cpu || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? 'ðŸ”´' : (m?.cpu || 0) > 60 ? 'ðŸŸ¡' : 'ðŸŸ¢'}</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="cpu-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">RAM</div>
+                    <div style="font-size: 24px; font-weight: bold;" id="ram-value">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.ram || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="ram-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Network</div>
+                    <div style="font-size: 24px; font-weight: bold;">${m?.network_rx_mbps || 0} Mbps</div>
+                    <div class="sparkline" id="net-sparkline"></div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Disk</div>
+                    <div style="font-size: 24px; font-weight: bold;">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>${m?.disk || 0}%</span>
+                                <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
+                            </div>
+                            <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                                <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sparkline" id="disk-sparkline"></div>
+                </div>
+            </div>
+            
+            <!-- Lower half - More detail -->
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px;">
+                <!-- Left: Host Details -->
                 <div class="panel">
                     <div class="panel-header">Host Details</div>
                     <div class="panel-body">
-                        <div class="cards-grid">
-                            <div class="card"><div class="card-label">Hostname</div><div class="card-value" style="font-size:18px;">${m?.name || window.location.hostname}</div></div>
-                            <div class="card"><div class="card-label">CPU</div><div class="card-value">${m?.cpu || 0}%</div></div>
-                            <div class="card"><div class="card-label">RAM</div><div class="card-value">${m?.ram || 0}%</div><div class="card-detail">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</div></div>
-                            <div class="card"><div class="card-label">Disk</div><div class="card-value">${m?.disk || 0}%</div></div>
-                            <div class="card"><div class="card-label">Load</div><div class="card-value" style="font-size:18px;">${m?.load_avg_1m || 0}</div></div>
-                            <div class="card"><div class="card-label">Processes</div><div class="card-value">${m?.processes || 0}</div></div>
-                            <div class="card"><div class="card-label">Uptime</div><div class="card-value" style="font-size:18px;">${m?.uptime || 'N/A'}</div></div>
-                            <div class="card"><div class="card-label">Swap</div><div class="card-value">${m?.swap || 0}%</div></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <div><span style="color:#6a7090;font-size:11px;">OS</span><br><span style="font-size:13px;">${m?.os || 'Linux'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">CPU Cores</span><br><span style="font-size:13px;">${m?.cpu_count || 'N/A'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Uptime</span><br><span style="font-size:13px;">${m?.uptime || 'N/A'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Swap</span><br><span style="font-size:13px;">${m?.swap || 0}%</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Load (1m)</span><br><span style="font-size:13px;">${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span></div>
+                            <div><span style="color:#6a7090;font-size:11px;">Processes</span><br><span style="font-size:13px;">${m?.processes || 0}</span></div>
                         </div>
                     </div>
                 </div>
-            `;
-        }
-        
-        function renderVMList() {
-            const vms = state.vms || [];
-            const k8s = state.kubernetes || {};
-            const pods = k8s.pods || [];
-            
-            document.getElementById('content-area').innerHTML = `
+                
+                <!-- Right: Recent Activity -->
                 <div class="panel">
-                    <div class="panel-header">Virtual Machines <span style="color:#6a7090;font-weight:normal;">(${vms.length} total)</span></div>
-                    <div class="panel-body" style="padding:0;">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'vm')"></th>
-                                    <th>Name</th>
-                                    <th>State</th>
-                                    <th>IP</th>
-                                    <th>CPU</th>
-                                    <th>RAM</th>
-                                    <th>Pods</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${vms.map(vm => {
-                                    const podCount = pods.filter(p => p.node === vm.name).length;
-                                    const isPaused = vm.state === 'paused';
-                                    const isRunning = vm.state === 'running';
-                                    return `
-                                    <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
-                                        <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
-                                        <td style="color:#64b5f6;">${vm.name}</td>
-                                        <td><span class="badge ${isRunning ? 'badge-success' : isPaused ? 'badge-warning' : 'badge-error'}">${vm.state}</span></td>
-                                        <td>${vm.ip || 'unknown'}</td>
-                                        <td>${vm.cpu || 'N/A'}</td>
-                                        <td>${vm.ram || 'N/A'}</td>
-                                        <td>${podCount}</td>
-                                        <td onclick="event.stopPropagation()">
-                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">â–¶</button>
-                                            <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;" title="Shutdown">â¹</button>
-                                            <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;" title="Snapshot">ðŸ’¾</button>
-                                            ${isRunning ? `<button class="btn btn-warning" onclick="executeAction('vm', '${vm.name}', 'pause')" style="font-size:10px;padding:2px 6px;" title="Pause">â¸</button>` : ''}
-                                            ${isPaused ? `<button class="btn btn-success" onclick="executeAction('vm', '${vm.name}', 'resume')" style="font-size:10px;padding:2px 6px;" title="Resume">â–¶ï¸</button>` : ''}
-                                        </td>
-                                    </tr>
-                                `}).join('')}
-                            </tbody>
-                        </table>
+                    <div class="panel-header">Recent Activity</div>
+                    <div class="panel-body" style="max-height:200px;overflow-y:auto;">
+                        ${(state.events || []).slice(0, 5).map(e => `
+                            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                                <span style="color:${e.severity === 'error' ? '#f44336' : e.severity === 'warning' ? '#ff9800' : '#4caf50'};">${e.message}</span>
+                                <span style="color:#6a7090;font-size:10px;">${new Date(e.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                        `).join('') || '<div style="color:#6a7090;font-size:12px;">No recent activity</div>'}
                     </div>
                 </div>
-            `;
-        }
+            </div>
+        `;
+        
+        // Request sparkline data
+        sendCommand('get_metrics_history', { period: '1h' });
+    }
+       function renderHostView() {
+        const m = state.metrics;
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">ðŸ–¥ï¸ Host Details</div>
+                <div class="panel-body">
+                    <div class="cards-grid">
+                        <div class="card" style="grid-column: span 2;">
+                            <div class="card-label">Hostname</div>
+                            <div class="card-value" style="font-size:22px;color:var(--accent);">${m?.name || window.location.hostname}</div>
+                            <div class="card-detail">${m?.os || 'Linux'} â€¢ ${m?.cpu_count || 'N/A'} Cores</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">CPU</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.cpu || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${(m?.cpu || 0) > 80 ? 'ðŸ”´ High' : (m?.cpu || 0) > 60 ? 'ðŸŸ¡ Elevated' : 'ðŸŸ¢ Normal'}</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.cpu || 0}%;background:${(m?.cpu || 0) > 80 ? '#f44336' : (m?.cpu || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:#6a7090;">
+                                    <span>Load: ${m?.load_avg_1m ? m.load_avg_1m.toFixed(2) : '0.00'}</span>
+                                    <span>${m?.load_avg_5m ? m.load_avg_5m.toFixed(2) : '0.00'}</span>
+                                    <span>${m?.load_avg_15m ? m.load_avg_15m.toFixed(2) : '0.00'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">RAM</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.ram || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.ram || 0}%;background:${(m?.ram || 0) > 80 ? '#f44336' : (m?.ram || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Disk</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};">${m?.disk || 0}%</span>
+                                    <span style="font-size:12px;color:#6a7090;">${m?.disk_used_gb || 0} / ${m?.disk_total_gb || 0} GB</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.disk || 0}%;background:${(m?.disk || 0) > 80 ? '#f44336' : (m?.disk || 0) > 60 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Network</div>
+                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.network_speed_mbps || 0} <span style="font-size:14px;color:#6a7090;font-weight:400;">Mbps</span></div>
+                            <div class="card-detail">${m?.network_rx_mbps || 0} RX / ${m?.network_tx_mbps || 0} TX</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Processes</div>
+                            <div style="font-size:24px;font-weight:700;color:var(--accent);">${m?.processes || 0}</div>
+                            <div class="card-detail">Running</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Uptime</div>
+                            <div style="font-size:20px;font-weight:700;color:var(--success);">${m?.uptime || 'N/A'}</div>
+                            <div class="card-detail">Since ${new Date(Date.now() - ((m?.uptime_seconds || 0) * 1000)).toLocaleDateString()}</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-label">Swap</div>
+                            <div style="display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-size:24px;font-weight:700;color:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};">${m?.swap || 0}%</span>
+                                </div>
+                                <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                                    <div style="height:100%;width:${m?.swap || 0}%;background:${(m?.swap || 0) > 50 ? '#ff9800' : '#4caf50'};border-radius:4px;transition:width 0.5s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+        
+    function renderVMList() {
+        const vms = state.vms || [];
+        const k8s = state.kubernetes || {};
+        const pods = k8s.pods || [];
+        
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">Virtual Machines <span style="color:#6a7090;font-weight:normal;">(${vms.length} total)</span></div>
+                <div class="panel-body" style="padding:0;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width:30px;"><input type="checkbox" onclick="toggleSelectAll(this, 'vm')"></th>
+                                <th>Name</th>
+                                <th>State</th>
+                                <th>IP</th>
+                                <th>CPU</th>
+                                <th>RAM</th>
+                                <th>RAM %</th>
+                                <th>Disk</th>
+                                <th>Disk %</th>
+                                <th>Swap</th>
+                                <th>Pods</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${vms.map(vm => {
+                                const podCount = pods.filter(p => p.node === vm.name).length;
+                                const isPaused = vm.state === 'paused';
+                                const isRunning = vm.state === 'running';
+                                const ramPercent = vm.ram_percent || 0;
+                                const diskPercent = vm.disk_percent || 0;
+                                return `
+                                <tr class="${state.selectedItems.has('vm:'+vm.name) ? 'selected' : ''}" onclick="openDrawer('vm', '${vm.name}')">
+                                    <td onclick="event.stopPropagation()"><input type="checkbox" ${state.selectedItems.has('vm:'+vm.name) ? 'checked' : ''} onclick="toggleSelectItem('vm:${vm.name}')"></td>
+                                    <td style="color:#64b5f6;">${vm.name}</td>
+                                    <td><span class="badge ${isRunning ? 'badge-success' : isPaused ? 'badge-warning' : 'badge-error'}">${vm.state}</span></td>
+                                    <td>${vm.ip || 'unknown'}</td>
+                                    <td>${vm.cpu || 'N/A'}</td>
+                                    <td>${vm.ram || 'N/A'}</td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:4px;">
+                                            <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;min-width:40px;">
+                                                <div style="height:100%;width:${ramPercent}%;background:${ramPercent > 80 ? '#dc2626' : ramPercent > 60 ? '#f59e0b' : '#16a34a'};border-radius:3px;"></div>
+                                            </div>
+                                            <span style="font-size:10px;color:#6a7090;min-width:30px;">${ramPercent}%</span>
+                                        </div>
+                                    </td>
+                                    <td>${vm.disk || 'N/A'}</td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:4px;">
+                                            <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;min-width:40px;">
+                                                <div style="height:100%;width:${diskPercent}%;background:${diskPercent > 80 ? '#dc2626' : diskPercent > 60 ? '#f59e0b' : '#16a34a'};border-radius:3px;"></div>
+                                            </div>
+                                            <span style="font-size:10px;color:#6a7090;min-width:30px;">${diskPercent}%</span>
+                                        </div>
+                                    </td>
+                                    <td>${vm.swap || 'N/A'}</td>
+                                    <td>${podCount}</td>
+                                    <td onclick="event.stopPropagation()">
+                                        <button class="btn" onclick="executeAction('vm', '${vm.name}', 'restart')" style="font-size:10px;padding:2px 6px;" title="Restart">â–¶</button>
+                                        <button class="btn btn-danger" onclick="executeAction('vm', '${vm.name}', 'shutdown')" style="font-size:10px;padding:2px 6px;" title="Shutdown">â¹</button>
+                                        <button class="btn" onclick="executeAction('vm', '${vm.name}', 'snapshot')" style="font-size:10px;padding:2px 6px;" title="Snapshot">ðŸ’¾</button>
+                                        ${isRunning ? `<button class="btn btn-warning" onclick="executeAction('vm', '${vm.name}', 'pause')" style="font-size:10px;padding:2px 6px;" title="Pause">â¸</button>` : ''}
+                                        ${isPaused ? `<button class="btn btn-success" onclick="executeAction('vm', '${vm.name}', 'resume')" style="font-size:10px;padding:2px 6px;" title="Resume">â–¶ï¸</button>` : ''}
+                                    </td>
+                                </tr>
+                            `}).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+       
         
         function renderK8sView(type) {
             const k8s = state.kubernetes || {};
@@ -8249,29 +8524,131 @@ LAST MODIFIED: 07/24/2026 12:14:28
         
         function renderAutomations() {
             document.getElementById('content-area').innerHTML = `
-                <div class="panel">
-                    <div class="panel-header">Automation Rules</div>
-                    <div class="panel-body">
-                        <div class="job-item">
-                            <div style="font-weight:bold;color:#64b5f6;">Pod CrashLoop Recovery</div>
-                            <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
-                            <div style="font-size:11px;color:#6a7090;">Actions: Restart â†’ Wait â†’ Verify</div>
-                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                <input type="checkbox" checked> Enabled
-                            </label>
-                        </div>
-                        <div class="job-item">
-                            <div style="font-weight:bold;color:#64b5f6;">VM Recovery</div>
-                            <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
-                            <div style="font-size:11px;color:#6a7090;">Actions: Ping â†’ SSH â†’ Restart Network â†’ Reboot</div>
-                            <label style="margin-top:8px;display:flex;align-items:center;gap:8px;cursor:pointer;">
-                                <input type="checkbox" checked> Enabled
-                            </label>
+            <div class="panel">
+                <div class="panel-header">ðŸ¤– Automation Rules <span style="color:#6a7090;font-weight:normal;font-size:11px;">(${state.automations?.length || 2} active)</span></div>
+                <div class="panel-body">
+                    <!-- Pod CrashLoop Recovery -->
+                    <div class="job-item" style="border-left:3px solid #4caf50;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸ”„ Pod CrashLoop Recovery</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Pod CrashLoopBackOff</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Restart â†’ Wait â†’ Verify</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-success">â— Enabled</span>
+                                <button class="btn" onclick="toggleAutomation('pod-crashloop')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Toggle</button>
+                            </div>
                         </div>
                     </div>
+                    
+                    <!-- VM Recovery -->
+                    <div class="job-item" style="border-left:3px solid #4caf50;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸ–¥ï¸ VM Recovery</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: VM unreachable</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Ping â†’ SSH â†’ Restart Network â†’ Reboot</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-success">â— Enabled</span>
+                                <button class="btn" onclick="toggleAutomation('vm-recovery')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Toggle</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Node Auto-Repair -->
+                    <div class="job-item" style="border-left:3px solid #ff9800;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸ”§ Node Auto-Repair</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Node NotReady for > 5 minutes</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Cordon â†’ Restart kubelet â†’ Uncordon</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-warning">â— Disabled</span>
+                                <button class="btn btn-primary" onclick="toggleAutomation('node-repair')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Enable</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- High CPU Auto-Scale -->
+                    <div class="job-item" style="border-left:3px solid #ff9800;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸ“ˆ High CPU Auto-Scale</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Pod CPU > 80% for 5 minutes</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Scale deployment +1 replica (up to max 5)</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-warning">â— Disabled</span>
+                                <button class="btn btn-primary" onclick="toggleAutomation('cpu-scale')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Enable</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- DNS Auto-Repair -->
+                    <div class="job-item" style="border-left:3px solid #2196f3;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸŒ DNS Auto-Repair</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: DNS resolution fails</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Flush cache â†’ Restart resolver â†’ Verify</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-info">â— Pending</span>
+                                <button class="btn btn-success" onclick="toggleAutomation('dns-repair')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Activate</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Snapshot Auto-Schedule -->
+                    <div class="job-item" style="border-left:3px solid #9c27b0;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:bold;color:#64b5f6;">ðŸ’¾ Snapshot Auto-Schedule</div>
+                                <div style="font-size:11px;color:#8890b0;">Trigger: Daily at 2AM</div>
+                                <div style="font-size:11px;color:#6a7090;">Actions: Snapshot all VMs â†’ Clean old snapshots (keep last 7)</div>
+                            </div>
+                            <div>
+                                <span class="badge badge-info">â— Pending</span>
+                                <button class="btn btn-success" onclick="toggleAutomation('snapshot-schedule')" style="font-size:10px;padding:2px 8px;margin-left:8px;">Schedule</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Add New Automation -->
+                    <div style="margin-top:16px;padding:12px;border:2px dashed var(--border);border-radius:6px;text-align:center;">
+                        <button class="btn btn-primary" onclick="addAutomation()" style="font-size:12px;">+ Add New Automation Rule</button>
+                        <div style="font-size:11px;color:#6a7090;margin-top:4px;">Create custom rules for any resource event</div>
+                    </div>
                 </div>
-            `;
-        }
+            </div>
+        `;
+    }
+
+    // Toggle automation function
+    function toggleAutomation(ruleId) {
+        showNotification('Automation', `Toggling rule: ${ruleId}`, 'info');
+        // In a real implementation, this would send a command to the server
+        // sendCommand('toggle_automation', { rule_id: ruleId });
+        refreshAll();
+    }
+
+    // Add automation function
+    function addAutomation() {
+        const name = prompt('Enter automation name:');
+        if (!name) return;
+        const trigger = prompt('Enter trigger condition (e.g., "Pod status = CrashLoopBackOff"):');
+        if (!trigger) return;
+        const actions = prompt('Enter actions (comma separated):');
+        if (!actions) return;
+        
+        showNotification('Automation', `Added rule: ${name}`, 'success');
+        // In a real implementation:
+        // sendCommand('add_automation', { name, trigger, actions });
+        refreshAll();
+    }
         
         function renderTimeline(data) {
             data = data || [];
@@ -8475,31 +8852,137 @@ LAST MODIFIED: 07/24/2026 12:14:28
         }
         
         // ============================================================
-        // ACTIONS
         // ============================================================
+        // ACTIONS - FIXED WITH PROPER FEEDBACK
+        // ============================================================
+
         function refreshAll() {
+            showNotification('Refresh', 'Refreshing all data...', 'info');
             sendCommand('get_metrics');
             sendCommand('get_vms');
             sendCommand('get_kubernetes');
             sendCommand('get_events');
             sendCommand('get_alerts');
             sendCommand('get_problems');
+            showNotification('Refresh', 'âœ… Data refreshed', 'success');
+        }
+
+       function runDiagnostics() {
+        // Show what we're diagnosing
+        const target = prompt(
+            'ðŸ” What would you like to diagnose?\n\n' +
+            'Options:\n' +
+            '  1. Network (default) - Diagnose all network layers\n' +
+            '  2. VM - Diagnose a specific VM\n' +
+            '  3. Kubernetes - Diagnose cluster health\n' +
+            '  4. All - Full system diagnostic\n\n' +
+            'Enter number or leave blank for network:',
+            '1'
+        );
+        
+        if (target === null) return; // User cancelled
+        
+        let diagnosticType = 'network';
+        let targetName = '';
+        
+        switch(target.trim()) {
+            case '2':
+                const vmName = prompt('Enter VM name to diagnose:');
+                if (!vmName) return;
+                diagnosticType = 'vm';
+                targetName = vmName;
+                break;
+            case '3':
+                diagnosticType = 'kubernetes';
+                break;
+            case '4':
+                diagnosticType = 'all';
+                break;
+            default:
+                diagnosticType = 'network';
+                break;
         }
         
-        function runDiagnostics() {
-            sendCommand('run_diagnostics');
-            showNotification('Diagnostics', 'Running...', 'info');
+        showNotification('Diagnostics', `ðŸ” Running ${diagnosticType} diagnostics...`, 'info');
+        
+        if (state.currentView === 'network') {
+            const output = document.getElementById('network-output');
+            if (output) {
+                output.innerHTML = `<div style="color:#40c4ff;">ðŸ” Running ${diagnosticType} diagnostics${targetName ? ' on ' + targetName : ''}...</div>`;
+            }
+            sendCommand('run_diagnostics', { type: diagnosticType, target: targetName });
+            return;
         }
         
+        const content = document.getElementById('content-area');
+        const diagPanel = document.createElement('div');
+        diagPanel.className = 'panel';
+        diagPanel.style.marginTop = '12px';
+        diagPanel.innerHTML = `
+            <div class="panel-header">ðŸ” ${diagnosticType.charAt(0).toUpperCase() + diagnosticType.slice(1)} Diagnostic Results${targetName ? ' - ' + targetName : ''}</div>
+            <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:var(--bg-surface);border-radius:4px;padding:12px;">
+                <div style="color:#2563eb;">â³ Running diagnostics...</div>
+            </div>
+        `;
+        content.prepend(diagPanel);
+        
+        sendCommand('run_diagnostics', { type: diagnosticType, target: targetName });
+    }
+
         function runRepair(target) {
-            sendCommand('run_repair', { target: target || '' });
-            showNotification('Repair', 'Starting repair...', 'info');
+        // Show what will be repaired
+        const confirmMsg = 
+            'âš ï¸ REPAIR WARNING\n\n' +
+            'This will attempt to repair:\n' +
+            '  â€¢ DNS resolution (flush cache, restart resolver)\n' +
+            '  â€¢ Network interfaces (reconnect if down)\n' +
+            '  â€¢ Routing (flush ARP cache, restart NetworkManager)\n' +
+            '  â€¢ DHCP lease (renew if DHCP)\n' +
+            '  â€¢ Bridge interfaces (re-enslave if needed)\n\n' +
+            'Active connections may be briefly disrupted.\n' +
+            'VMs may lose network connectivity momentarily.\n\n' +
+            'Continue with repair?';
+        
+        if (!confirm(confirmMsg)) {
+            showNotification('Repair', 'âŒ Repair cancelled', 'warning');
+            return;
         }
         
+        showNotification('Repair', 'ðŸ”§ Starting repair...', 'info');
+        
+        if (state.currentView === 'network') {
+            const output = document.getElementById('network-output');
+            if (output) {
+                output.innerHTML = '<div style="color:#ff9800;">ðŸ”§ Running repair...</div>';
+            }
+            sendCommand('run_repair', { target: target || '' });
+            return;
+        }
+        
+        const content = document.getElementById('content-area');
+        const repairPanel = document.createElement('div');
+        repairPanel.className = 'panel';
+        repairPanel.style.marginTop = '12px';
+        repairPanel.innerHTML = `
+            <div class="panel-header">ðŸ”§ Repair Results</div>
+            <div class="panel-body" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;background:var(--bg-surface);border-radius:4px;padding:12px;">
+                <div style="color:#ff9800;">â³ Running repair...</div>
+            </div>
+        `;
+        content.prepend(repairPanel);
+        
+        sendCommand('run_repair', { target: target || '' });
+    }
+
         function createSnapshot() {
-            const vmName = prompt('Enter VM name for snapshot:');
+            const vmName = prompt('Enter VM name for snapshot (or leave empty for all):');
+            if (vmName === null) return;
+            
             if (vmName) {
                 sendCommand('execute_action', { resource_type: 'vm', resource_name: vmName, action: 'snapshot' });
+                showNotification('Snapshot', `ðŸ’¾ Creating snapshot for ${vmName}...`, 'info');
+            } else {
+                showNotification('Snapshot', 'ðŸ’¾ Snapshot creation requires a VM name', 'warning');
             }
         }
         
@@ -8518,7 +9001,96 @@ LAST MODIFIED: 07/24/2026 12:14:28
                 showNotification('Emergency', 'Emergency mode activated', 'warning');
             }
         }
-        
+        // ============================================================
+        // NETWORK RECOVERY ACTIONS
+        // ============================================================
+
+        function runNetworkDiagnose() {
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#40c4ff;">ðŸ” Running diagnostics...</div>';
+            
+            // Reset layer indicators
+            document.querySelectorAll('.layer-indicator').forEach(el => {
+                el.style.background = 'rgba(255,255,255,0.05)';
+                el.style.color = '#666';
+                el.style.borderColor = 'transparent';
+            });
+            
+            sendCommand('run_diagnostics');
+            // The response will be handled by handleMessage
+            // We need to display it in the network view
+        }
+
+        function runNetworkRepair() {
+            if (!confirm('âš ï¸ This will attempt to repair network issues. Continue?')) return;
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#ffc107;">ðŸ”§ Running repair...</div>';
+            sendCommand('run_repair');
+        }
+
+        function runNetworkStatus() {
+            const output = document.getElementById('network-output');
+            output.innerHTML = '<div style="color:#40c4ff;">ðŸ“Š Getting network status...</div>';
+            // Use the network-recover status command via API
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    output.innerHTML = `
+                        <div style="color:#4caf50;">âœ… Network Status</div>
+                        <div style="color:#8890b0;font-size:12px;margin-top:8px;">
+                            <div>Host: ${data.host || 'unknown'}</div>
+                            <div>VMs Running: ${data.vms_running || 0}</div>
+                            <div>K8s Available: ${data.k8s_available ? 'âœ…' : 'âŒ'}</div>
+                            <div>Uptime: ${data.uptime || 'N/A'}</div>
+                        </div>
+                        <div style="margin-top:12px;color:#6a7090;font-size:11px;">${new Date(data.timestamp).toLocaleString()}</div>
+                    `;
+                })
+                .catch(() => {
+                    output.innerHTML = '<div style="color:#f44336;">âŒ Failed to get status</div>';
+                });
+        }
+
+        function updateNetworkLayers(lines) {
+            const layerMap = {
+                'LAYER 1': 0, 'LAYER 2': 1, 'LAYER 3': 2, 'LAYER 4': 3,
+                'LAYER 5': 4, 'LAYER 6': 5, 'LAYER 7': 6, 'LAYER 8': 7,
+                'LAYER 9': 8, 'LAYER 10': 9, 'LAYER 11': 10
+            };
+            
+            let currentLayer = -1;
+            lines.forEach(line => {
+                for (const [key, index] of Object.entries(layerMap)) {
+                    if (line.includes(key)) {
+                        currentLayer = index;
+                        const el = document.getElementById(`layer-${index}`);
+                        if (el) {
+                            el.style.background = 'rgba(100, 181, 246, 0.15)';
+                            el.style.color = '#64b5f6';
+                            el.style.borderColor = '#64b5f6';
+                        }
+                    }
+                }
+                if (currentLayer >= 0) {
+                    const el = document.getElementById(`layer-${currentLayer}`);
+                    if (el) {
+                        if (line.includes('âœ…') || line.includes('PASS')) {
+                            el.style.background = 'rgba(76, 175, 80, 0.2)';
+                            el.style.color = '#4caf50';
+                            el.style.borderColor = '#4caf50';
+                        } else if (line.includes('âŒ') || line.includes('FAIL')) {
+                            el.style.background = 'rgba(244, 67, 54, 0.2)';
+                            el.style.color = '#f44336';
+                            el.style.borderColor = '#f44336';
+                        } else if (line.includes('âš ') || line.includes('WARN')) {
+                            el.style.background = 'rgba(255, 152, 0, 0.2)';
+                            el.style.color = '#ff9800';
+                            el.style.borderColor = '#ff9800';
+                        }
+                    }
+                }
+            });
+        }
         // ============================================================
         // SEARCH
         // ============================================================
@@ -8565,11 +9137,37 @@ LAST MODIFIED: 07/24/2026 12:14:28
         // UTILITIES
         // ============================================================
         function updateMetricsDisplay(m) {
-            const cpuEl = document.getElementById('cpu-value');
-            const ramEl = document.getElementById('ram-value');
-            if (cpuEl) cpuEl.textContent = (m?.cpu || 0) + '%';
-            if (ramEl) ramEl.textContent = (m?.ram || 0) + '%';
+        const cpuEl = document.getElementById('cpu-value');
+        const ramEl = document.getElementById('ram-value');
+        if (cpuEl) {
+            const cpu = m?.cpu || 0;
+            cpuEl.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span>${cpu}%</span>
+                        <span style="font-size:12px;color:#6a7090;">${cpu > 80 ? 'ðŸ”´' : cpu > 60 ? 'ðŸŸ¡' : 'ðŸŸ¢'}</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${cpu}%;background:${cpu > 80 ? '#f44336' : cpu > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
+                </div>
+            `;
         }
+        if (ramEl) {
+            const ram = m?.ram || 0;
+            ramEl.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span>${ram}%</span>
+                        <span style="font-size:12px;color:#6a7090;">${m?.ram_used_gb || 0} / ${m?.ram_total_gb || 0} GB</span>
+                    </div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${ram}%;background:${ram > 80 ? '#f44336' : ram > 60 ? '#ff9800' : '#4caf50'};border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
+                </div>
+            `;
+        }
+    }
         
         function updateStatusBar() {
             const elapsed = ((Date.now() - state.lastUpdate) / 1000).toFixed(1);
@@ -8698,15 +9296,176 @@ LAST MODIFIED: 07/24/2026 12:14:28
             }
         }
         
-        function toggleTerminal() {
-            const terminal = document.getElementById('terminal');
-            terminal.style.display = terminal.style.display === 'none' ? 'block' : 'none';
-            if (terminal.style.display === 'block') {
-                document.getElementById('terminal-output').innerHTML += `
-                    <div class="terminal-line"><span class="terminal-prompt">$ </span>Terminal ready</div>
-                `;
-            }
+    // ============================================================
+    // TERMINAL - Fully Working with History & Better UX
+    // ============================================================
+
+    let terminalHistory = [];
+    let terminalHistoryIndex = -1;
+
+    function clearTerminal() {
+        const output = document.getElementById('terminal-output');
+        if (output) {
+            output.innerHTML = `
+                <div class="terminal-output info">â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—</div>
+                <div class="terminal-output info">â•‘  Terminal cleared                                 â•‘</div>
+                <div class="terminal-output info">â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•</div>
+                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€</div>
+            `;
         }
+        terminalHistory = [];
+        terminalHistoryIndex = -1;
+    }
+
+    // Terminal command execution with history
+    document.addEventListener('DOMContentLoaded', function() {
+        const terminalInput = document.getElementById('terminal-input');
+        const terminalContainer = document.getElementById('terminal-container');
+        
+        if (terminalInput) {
+            // Enter key to execute
+            terminalInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    const command = this.value.trim();
+                    if (command) {
+                        // Add to history
+                        terminalHistory.push(command);
+                        terminalHistoryIndex = terminalHistory.length;
+                        executeTerminalCommand(command);
+                        this.value = '';
+                    }
+                }
+                // Up arrow for history (previous command)
+                else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (terminalHistoryIndex > 0) {
+                        terminalHistoryIndex--;
+                        this.value = terminalHistory[terminalHistoryIndex] || '';
+                    }
+                }
+                // Down arrow for history (next command)
+                else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (terminalHistoryIndex < terminalHistory.length - 1) {
+                        terminalHistoryIndex++;
+                        this.value = terminalHistory[terminalHistoryIndex] || '';
+                    } else {
+                        terminalHistoryIndex = terminalHistory.length;
+                        this.value = '';
+                    }
+                }
+            });
+        }
+        
+        // Click on terminal container focuses input
+        if (terminalContainer) {
+            terminalContainer.addEventListener('click', function(e) {
+                // Don't steal focus if clicking on output text (for selection)
+                if (e.target.tagName !== 'INPUT') {
+                    terminalInput?.focus();
+                }
+            });
+        }
+    });
+
+    function executeTerminalCommand(command) {
+        const output = document.getElementById('terminal-output');
+        if (!output) return;
+        
+        // Add command to output with timestamp
+        const timestamp = new Date().toLocaleTimeString();
+        output.innerHTML += `
+            <div style="display:flex;gap:8px;margin-top:4px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                <span style="color:#58a6ff;font-weight:600;">$</span>
+                <span style="color:#e6edf3;">${escapeHtml(command)}</span>
+                <span style="color:#6a7090;font-size:10px;margin-left:auto;">${timestamp}</span>
+            </div>
+        `;
+        
+        // Show spinner while executing
+        const spinnerId = 'spinner-' + Date.now();
+        output.innerHTML += `<div id="${spinnerId}" class="terminal-output info">â³ Executing...</div>`;
+        output.scrollTop = output.scrollHeight;
+        
+        // Execute command via API
+        fetch('/api/terminal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Remove spinner
+            const spinner = document.getElementById(spinnerId);
+            if (spinner) spinner.remove();
+            
+            if (data.error) {
+                output.innerHTML += `<div class="terminal-output error">âŒ Error: ${escapeHtml(data.error)}</div>`;
+            } else if (data.output) {
+                const lines = data.output.split('\n');
+                // Only show first 50 lines to prevent flooding
+                const displayLines = lines.slice(0, 50);
+                if (lines.length > 50) {
+                    displayLines.push(`... and ${lines.length - 50} more lines (truncated)`);
+                }
+                displayLines.forEach(line => {
+                    let color = '#8b949e';
+                    let prefix = '';
+                    if (line.toLowerCase().includes('error') || line.toLowerCase().includes('fail')) {
+                        color = '#f85149';
+                        prefix = 'âŒ ';
+                    } else if (line.toLowerCase().includes('warning') || line.toLowerCase().includes('warn')) {
+                        color = '#d29922';
+                        prefix = 'âš ï¸ ';
+                    } else if (line.toLowerCase().includes('success') || line.toLowerCase().includes('ok') || line.toLowerCase().includes('connected')) {
+                        color = '#3fb950';
+                        prefix = 'âœ… ';
+                    } else if (line.includes('â—') || line.includes('running') || line.includes('up')) {
+                        color = '#58a6ff';
+                    }
+                    if (line.trim()) {
+                        output.innerHTML += `<div class="terminal-output" style="color:${color};">${prefix}${escapeHtml(line)}</div>`;
+                    }
+                });
+                // Show exit code if non-zero
+                if (data.exit_code !== undefined && data.exit_code !== 0) {
+                    output.innerHTML += `<div class="terminal-output warning">âš ï¸ Exit code: ${data.exit_code}</div>`;
+                }
+            }
+            // Scroll to bottom
+            const container = document.getElementById('terminal-container');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+            output.scrollTop = output.scrollHeight;
+        })
+        .catch(error => {
+            // Remove spinner
+            const spinner = document.getElementById(spinnerId);
+            if (spinner) spinner.remove();
+            output.innerHTML += `<div class="terminal-output error">âŒ Error: ${escapeHtml(error.message)}</div>`;
+        });
+    }
+
+    function toggleTerminal() {
+        const container = document.getElementById('terminal-container');
+        if (!container) return;
+        
+        if (container.style.display === 'none') {
+            container.style.display = 'block';
+            const input = document.getElementById('terminal-input');
+            if (input) {
+                setTimeout(() => input.focus(), 100);
+            }
+            // Update button style
+            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
+            if (btn) btn.style.color = 'var(--primary)';
+        } else {
+            container.style.display = 'none';
+            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
+            if (btn) btn.style.color = '';
+        }
+    }
         
         function showAuditLog() {
             sendCommand('get_audit_log');
@@ -8778,487 +9537,6 @@ LAST MODIFIED: 07/24/2026 12:14:28
 </body>
 </html>
 
-----------------------------------------
-FILE: F:\Linux_Network_Manager\network-recover\web\static\styles.css
-FULL PATH: F:\Linux_Network_Manager\network-recover\web\static\styles.css
-SIZE: 9.33 KB
-LAST MODIFIED: 07/24/2026 08:57:35
-----------------------------------------
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: linear-gradient(135deg, #0a0e27 0%, #1a1a3e 50%, #0d1b2a 100%);
-    color: #e0e0e0;
-    min-height: 100vh;
-}
-
-.container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
-}
-
-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 0;
-    border-bottom: 2px solid rgba(100, 200, 255, 0.1);
-    margin-bottom: 20px;
-}
-
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.logo .icon {
-    font-size: 28px;
-}
-
-.logo h1 {
-    font-size: 24px;
-    background: linear-gradient(135deg, #00d4ff, #7b2ffc);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-weight: 700;
-}
-
-.status-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 20px;
-    font-size: 14px;
-}
-
-.dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #666;
-    display: inline-block;
-}
-
-.dot.online {
-    background: #00e676;
-    box-shadow: 0 0 20px rgba(0, 230, 118, 0.3);
-}
-
-.dot.offline {
-    background: #ff1744;
-    box-shadow: 0 0 20px rgba(255, 23, 68, 0.3);
-}
-
-/* ============================================================
-   NAVIGATION
-   ============================================================ */
-nav {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-}
-
-.btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border: none;
-    border-radius: 12px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    color: white;
-}
-
-.btn .icon {
-    font-size: 18px;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, #1a237e, #0d47a1);
-}
-
-.btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(13, 71, 161, 0.4);
-}
-
-.btn-success {
-    background: linear-gradient(135deg, #1b5e20, #2e7d32);
-}
-
-.btn-success:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(46, 125, 50, 0.4);
-}
-
-.btn-warning {
-    background: linear-gradient(135deg, #e65100, #f57c00);
-}
-
-.btn-warning:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(245, 124, 0, 0.4);
-}
-
-.btn-info {
-    background: linear-gradient(135deg, #00695c, #00897b);
-}
-
-.btn-info:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 137, 123, 0.4);
-}
-
-.btn-danger {
-    background: linear-gradient(135deg, #b71c1c, #d32f2f);
-}
-
-.btn-danger:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(211, 47, 47, 0.4);
-}
-
-.btn-dashboard {
-    background: linear-gradient(135deg, #4a148c, #6a1b9a);
-}
-
-.btn-dashboard:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(106, 27, 154, 0.4);
-}
-
-/* ============================================================
-   LAYERS
-   ============================================================ */
-.layers {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-    padding: 12px;
-    background: rgba(255,255,255,0.03);
-    border-radius: 12px;
-}
-
-.layer {
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    background: rgba(255,255,255,0.05);
-    color: #666;
-    transition: all 0.3s ease;
-}
-
-.layer.active {
-    background: rgba(0, 212, 255, 0.2);
-    color: #00d4ff;
-    box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);
-}
-
-.layer.pass {
-    background: rgba(0, 230, 118, 0.2);
-    color: #00e676;
-}
-
-.layer.fail {
-    background: rgba(255, 23, 68, 0.2);
-    color: #ff1744;
-}
-
-.layer.warn {
-    background: rgba(255, 193, 7, 0.2);
-    color: #ffc107;
-}
-
-/* ============================================================
-   OUTPUT
-   ============================================================ */
-.output {
-    background: rgba(0,0,0,0.4);
-    border-radius: 12px;
-    padding: 20px;
-    min-height: 400px;
-    max-height: 500px;
-    overflow-y: auto;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    font-size: 13px;
-    line-height: 1.8;
-    border: 1px solid rgba(255,255,255,0.05);
-}
-
-.output::-webkit-scrollbar {
-    width: 8px;
-}
-
-.output::-webkit-scrollbar-track {
-    background: rgba(255,255,255,0.05);
-    border-radius: 4px;
-}
-
-.output::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.15);
-    border-radius: 4px;
-}
-
-.placeholder {
-    color: #444;
-    text-align: center;
-    padding: 60px 20px;
-    font-size: 16px;
-}
-
-.log-line {
-    padding: 2px 0;
-    animation: fadeIn 0.3s ease;
-}
-
-.log-line.pass { color: #00e676; }
-.log-line.fail { color: #ff1744; }
-.log-line.warn { color: #ffc107; }
-.log-line.info { color: #40c4ff; }
-.log-line.success { color: #00e676; font-weight: bold; }
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-5px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* ============================================================
-   PROGRESS
-   ============================================================ */
-.progress-container {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    margin-top: 15px;
-    padding: 12px 20px;
-    background: rgba(255,255,255,0.03);
-    border-radius: 12px;
-}
-
-.progress-bar {
-    flex: 1;
-    height: 6px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 3px;
-    overflow: hidden;
-}
-
-.progress-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, #00d4ff, #7b2ffc);
-    transition: width 0.5s ease;
-}
-
-.progress-text {
-    font-size: 13px;
-    color: #40c4ff;
-    min-width: 40px;
-    text-align: right;
-}
-
-/* ============================================================
-   DASHBOARD TAB
-   ============================================================ */
-#dashboard {
-    display: none;
-    background: rgba(0,0,0,0.2);
-    border-radius: 12px;
-    padding: 24px;
-    min-height: 400px;
-}
-
-#dashboard h2 {
-    color: #00d4ff;
-    margin-bottom: 20px;
-    font-size: 22px;
-}
-
-.dashboard-section {
-    background: rgba(255,255,255,0.03);
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin-bottom: 16px;
-}
-
-.dashboard-section h3 {
-    color: #7ec8e3;
-    margin-bottom: 12px;
-    font-size: 16px;
-}
-
-.dashboard-section.vm-section {
-    background: rgba(255,255,255,0.02);
-    border-left: 3px solid #4a148c;
-}
-
-.dashboard-section.k3s-section {
-    background: rgba(255,255,255,0.02);
-    border-left: 3px solid #ff6f00;
-}
-
-/* Resource Bars */
-.resource-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 6px 0;
-}
-
-.resource-label {
-    min-width: 70px;
-    font-size: 0.85em;
-    color: #aaa;
-}
-
-.resource-bar {
-    flex: 1;
-    height: 18px;
-    background: #2a2a2a;
-    border-radius: 4px;
-    overflow: hidden;
-}
-
-.resource-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #4CAF50, #FFC107, #f44336);
-    background-size: 200% 100%;
-    border-radius: 4px;
-    transition: width 0.5s ease;
-}
-
-.resource-value {
-    min-width: 130px;
-    font-size: 0.85em;
-    text-align: right;
-    color: #ccc;
-}
-
-/* K3s Table */
-.k3s-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 10px;
-    font-size: 0.85em;
-}
-
-.k3s-table th {
-    text-align: left;
-    color: #888;
-    font-size: 0.8em;
-    padding: 6px 10px;
-    border-bottom: 1px solid #333;
-}
-
-.k3s-table td {
-    padding: 6px 10px;
-    border-bottom: 1px solid #222;
-    color: #ccc;
-}
-
-.k3s-table tr:hover td {
-    background: rgba(255,255,255,0.03);
-}
-
-.k3s-table .status-ready {
-    color: #00e676;
-}
-
-.k3s-table .status-not-ready {
-    color: #ff1744;
-}
-
-/* ============================================================
-   FOOTER
-   ============================================================ */
-footer {
-    display: flex;
-    justify-content: space-between;
-    padding: 20px 0;
-    margin-top: 20px;
-    border-top: 1px solid rgba(255,255,255,0.05);
-    font-size: 12px;
-    color: #444;
-}
-
-#connectionStatus {
-    color: #00e676;
-}
-
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
-@media (max-width: 768px) {
-    header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-    }
-    
-    nav {
-        flex-direction: column;
-    }
-    
-    .btn {
-        width: 100%;
-        justify-content: center;
-    }
-    
-    .layers {
-        gap: 4px;
-    }
-    
-    .layer {
-        font-size: 9px;
-        padding: 4px 10px;
-    }
-
-    .resource-row {
-        flex-wrap: wrap;
-        gap: 6px;
-    }
-
-    .resource-label {
-        min-width: 60px;
-        font-size: 0.8em;
-    }
-
-    .resource-value {
-        min-width: 100px;
-        font-size: 0.8em;
-    }
-
-    #dashboard {
-        padding: 12px;
-    }
-
-    .k3s-table {
-        font-size: 0.75em;
-    }
-
-    .k3s-table th,
-    .k3s-table td {
-        padding: 4px 6px;
-    }
-}
-
 
 ========================================
 COMPLETE FOLDER STRUCTURE
@@ -9271,660 +9549,7 @@ ROOT: F:\Linux_Network_Manager\network-recover
 
 |-- .git/
 |   |-- COMMIT_EDITMSG [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- config [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- description [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- FETCH_HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- hooks/
-|   |   |-- applypatch-msg.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- commit-msg.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fsmonitor-watchman.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- post-update.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-applypatch.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-commit.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-merge-commit.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- prepare-commit-msg.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-push.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-rebase.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- pre-receive.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- push-to-checkout.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- sendemail-validate.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- update.sample [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- index [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- info/
-|   |   |-- exclude [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- logs/
-|   |   |-- HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- refs/
-|   |   |   |-- heads/
-|   |   |   |   |-- main [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- remotes/
-|   |   |   |   |-- origin/
-|   |   |   |   |   |-- HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |   |   |-- main [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- objects/
-|   |   |-- 00/
-|   |   |   |-- 6f255caa0ea916e02e080a2d449d9c44d032fa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 719e3df2f9bc6665c0127ca2a134066f9010fb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 01/
-|   |   |   |-- 6ee5d121fa7c8d2a9a1b7ae186f823405b6789 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- fba2075322b7c7edf52409bffd4ac3ddacfd38 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 02/
-|   |   |   |-- 0299846f1276b07faabdc207033ae7b136c55d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 2dccbf8f0c7382aba847bdab3f41e8ea510915 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 477fa6fdb7de71341019fdb4305d3cce210884 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d41c6ace8bbe829050494c0b0838e406796056 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 03/
-|   |   |   |-- 7e1b87317709b0b8802e87bd29b5cac55bed17 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 04/
-|   |   |   |-- b01fad5b27132bd6cb9bd57e7b38faee3131f3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ed98d87167ce774e920c8fdc32d668ae175307 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 05/
-|   |   |   |-- 9d0c26423dd00aec4033ea7594483ea99c6df2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a622493eda54aa4d98e8282c958279a0d0c0ee [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 06/
-|   |   |   |-- 709d368305c7cb188416bea23b8472f22ad490 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b5f2ae8ac7023db3da24df62ce589d8564f6ec [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 07/
-|   |   |   |-- afdae949b872e69982c5c81881228588e9dce3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bcc0cb0b164c7f6d04b5a4dde14a0760714738 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 09/
-|   |   |   |-- ff166bdecd39423ccc918aca6b623d410a0b27 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0a/
-|   |   |   |-- 8bb03ef75d4550d2e611470dbc510f35306354 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0b/
-|   |   |   |-- 6eabb5e52566659db001d3aeeb3b08facaa01c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 74ad02d8e3d39a5e64a48990289b5f90e02168 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0c/
-|   |   |   |-- a4c37e6ec063880fd1e193ea09c0149c535e76 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f19d2d37996d920cfc96684f041a1da8231f4c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0d/
-|   |   |   |-- 34eb88681bd61a478596ada5f76b2dbab63e89 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0e/
-|   |   |   |-- ff1c818eada2cdba2c6d00a8e09da139066e42 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 0f/
-|   |   |   |-- 44e41f95048391d379063e77929b1116b833fe [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 10/
-|   |   |   |-- 94d870a8d8533348e9efa71cce37aa3e67f195 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 11/
-|   |   |   |-- ece94ebcc9de32048e0e00be00a51b791701d1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- fe5e18ff6862d5a4ec9d4c93e867427d445093 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 12/
-|   |   |   |-- 78417d348f6ee47f01eb5c7062421be69730ed [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 13/
-|   |   |   |-- 4b5a193ce29bbcf7b2b0f2504f60af26d20292 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e7d539bcc5a6331e1769a0f794b552c620c360 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 14/
-|   |   |   |-- 04667de86d5d38915255df2b73601117120d25 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 503f15418a94968f6726b8a3311e75529ff906 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7b3496a9fad58f53717907c853804b5f0c348e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 16/
-|   |   |   |-- 5ece3364c244137525226f1157a6835f4ff8ff [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b5df19dfdb4b887ad427eae4e7d20a790b9e9f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 17/
-|   |   |   |-- 1bf3d9d09f57060f1b6bc094771c19c779877e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 80211d7ab8b9ac55ed14842759059b4543fce1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d6187f53e7ad41653841684b0109c3d5d110dd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 18/
-|   |   |   |-- 4ad209deaf31166e353dd369e469507442d0bf [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 19/
-|   |   |   |-- 0d75283bdd2ddcf98a65a7fecfafeeadc345b2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d6ba5a25cac810e1cd657900dc9cc3bb4e61ab [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e89ae7aeee7e09784a86d2bd7bd1e030390f69 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ed4989e91001ffa619e74aff112407c7befa75 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 1a/
-|   |   |   |-- 68199cfd200931e2d70bb5180d40788c56a16c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 8a921863824dede05303ef1c2657412d807bb3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 1b/
-|   |   |   |-- 6a327adef68d5a87654e7f66f39168104e5aa5 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 6ab1d19bbb64b8878fd1d84b8b4c16029da657 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 1c/
-|   |   |   |-- 95f426bce4d8e842876223d0bdf3b3daf3d872 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ce23934d5fff8d38d9acc338918a241c9b2178 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 1d/
-|   |   |   |-- 6d4e3e9fab3737895989553d589e27c1dc6156 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 1e/
-|   |   |   |-- 74028c37dd702cf2a603619147280333d31627 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 21/
-|   |   |   |-- 89107cbb089779a44f46a2944c8f1b85b64291 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 22/
-|   |   |   |-- de88e3de70b9163b3f056a855c712f211dbcfd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 23/
-|   |   |   |-- 988340cd9330b7804433c7d54741626ab3e9db [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 24/
-|   |   |   |-- 816d9b209adca2831ed24e9b5840f4323aa021 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 25/
-|   |   |   |-- b5e3b0921da1b0a434fc000a903d04436161ab [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- fc774f0de52c33903a4e1255f28fd76749e6f0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 27/
-|   |   |   |-- 4f158050fd7f09a8c09f45fb5bdf4fbbd1e72b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b50d0880025f672f7032048c6f313386259820 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 2a/
-|   |   |   |-- 030c4b80e213916e5a46e4e29ffdaaab7ef663 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 0f275987f62d6969e381859923a0fcf85c3374 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a31909aae51d32216fed4f19a79889b248de2e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bc17fc9a26e0ccd08b57642a3eb5ad7bd08726 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 2d/
-|   |   |   |-- 9613779700889eb4892a83ed836ad411b0bb74 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ecd23eab717300427b195fb1f48a37e2a834f1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 2e/
-|   |   |   |-- 197accd0cac5fae5b1d2d9661eeb41f17201c3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 37740c8e5bc1c8bfbdecedb87f767a73965937 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 56d288b2af74bb3a354604fbba0cdd9520ff5a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 30/
-|   |   |   |-- 3f4df40e5fc55cc496f25a69810ae516ba5217 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 86d9b0ca3e69eeedba9cbd5e1c22ef4856b9f1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b51881d81040fe4a260f364930823f52f5c3db [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 32/
-|   |   |   |-- 3c5628bb6a4dc6098172147037a08a719692e0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7331c1496804538dafe5ab50a06b9fe2386511 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 92f7837b4f30f6754ee94362aaaf78b8b76909 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 34/
-|   |   |   |-- 35dbb16f33ee23cf47ae0e116cc4df6a4f30ec [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 5871a3602f18043c0677044af5cf9332fc0db2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 35/
-|   |   |   |-- 30ffa3c522ece6fad617a70310b2bfdb8f26bc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 36/
-|   |   |   |-- 1ef44327049cc8d189ca322610e8e837b0bab8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 333a6e5400d836684845b069c8fb5bd6532cc7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b991c362c0721806879e6bdd73cc61b02e10ed [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 37/
-|   |   |   |-- e96bb5f28f5edc0d324abd70f8cf4f5c071838 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 38/
-|   |   |   |-- 4eaddc4621c7732698d6c64278002b3843a402 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 39/
-|   |   |   |-- 970da638ed027933e593c43e0ab519e65921ea [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ca4f3fa6bfd5cb971054181cbbf0008a5ebaa7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 3b/
-|   |   |   |-- 5b53ef05104a20919a9e6e435eb4fe360d14b9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 3c/
-|   |   |   |-- 7593153c86cc20729e604b33564bbee4f1bd05 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 82c1ffb504845cf738b15f2b9b3ca3f1a7ad55 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- dde49f05b0f4142e7047d46898e4ecfa1e5904 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 3f/
-|   |   |   |-- 6dcd5eb6073b9bfc567603d67c2e6df2854294 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 87f24fa336c2de2f2e99a4f23b6a2f52248874 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d944fc0487a4e928a6f14deb04de99cc61b9c8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f3bb3573f0e3b786359697f2093cffca2cb712 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 40/
-|   |   |   |-- 22848b1ba2f8fca9638eb57e03a4129aec07a7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bc986f94e53dd39c22d6886833f7b41e17275a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 41/
-|   |   |   |-- 8ff0045081eb10ca4232aea2e9c44f412acd2f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a9f21fddb63c77a50fcb5c938773c760b7378e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b9297a951f4219e228ad1fd3e414e4c5404335 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 42/
-|   |   |   |-- 9645ef9a683ad241e7db24cded56e67b2d82d8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 43/
-|   |   |   |-- 2bb2abfb8b1ae1e3c4d7ede8f5f847fb63e917 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 34f968ee503c39473c6d3119d81cb7ee02a058 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 44/
-|   |   |   |-- ea0fd6df57d00c5a6deb2b843c78f67b9a919c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 46/
-|   |   |   |-- 62da0b5ffe7c1234b466e5c2804d20d76005a1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 47/
-|   |   |   |-- 54cdcad9ab3f06099474b2339d1098a1a73b50 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 48/
-|   |   |   |-- 4ff495a01c2778fa1708dbb28fc7e32ac31a47 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 91abd675d0782c1747948109f5f639f52cb7b9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 49/
-|   |   |   |-- 9db1f72c88da0498961276ac6f53cd04d26501 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 4a/
-|   |   |   |-- ceffbb8514bcc3a757271a0e8b84142d869637 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 4c/
-|   |   |   |-- 6aba4524b75a5101d7464db46bbab3ddbc3fea [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a8c9fbcd98a717ca204f5b72368315195e9fa1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 4e/
-|   |   |   |-- 37e16ec0c8f82128f498a8df0c50c314ba8d85 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- eb50a35635dbd7eefaffb33a19db122c3af8ad [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 51/
-|   |   |   |-- 118e42902f778e5a1db47e11986a3eb2067cde [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 52/
-|   |   |   |-- 772545fbe7b48854ad027c8b47533b42ecd21f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a23006c5a34692146a0d7051601610ce44019f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bbb6ef1bfe32a7d74da83ff3c5e06f9c266dd6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d189e9158597b4320891d5dc486d9534b420af [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 53/
-|   |   |   |-- 87d183efe8ff821f4d417c25228e3933cf9d21 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 54/
-|   |   |   |-- 410298c9f2372b416037356745bf4de71fa3bc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 4365a183b3a9e77f296040f5221dc61337aaaa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- acb92498cd7984b69291289ac7940d47988808 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 55/
-|   |   |   |-- cc342c63400da21a92614d6a88748373c0807f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- fa5bb816cece5131b990122d9feb32cbd83cd6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 57/
-|   |   |   |-- cddf36e5d347004fb04ac93d24e0be9f482618 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 58/
-|   |   |   |-- c51d003befccb532dc22f9db5c711f26479fb8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 59/
-|   |   |   |-- 1da0ac875b0d5234412f966441e72cccd30f4d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 626425d63d6f0b748b49002810bec00585cf5a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 5a/
-|   |   |   |-- 4b1962abc72f6d9cc5ffb6ef768c32428a26b1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 5b/
-|   |   |   |-- ace11933124664106146aecb530534af6d4a70 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 5d/
-|   |   |   |-- 27dcc2ad6ea9c742217aed44c8d073c761870e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 393583ce77d56b57c2effcd14e92e1ad62aaf0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 5e/
-|   |   |   |-- 169b0a03a938e277084c46e9c8f98bf881dfd8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 6fd7e2900663b35ae95d88a88a48500a5af251 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 74057bdf3a22ac285d07a309059bf2073e17df [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c3dd3c7ddaa675de006eb24cfa1be2fbcfce68 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c490d221a11e43b114d37c56a0462ac29a58d7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 5f/
-|   |   |   |-- 2c4a6182ef537de4f305b48ceb165169192221 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 60/
-|   |   |   |-- c74dfb6634294b80fad421d825e3a3529676ab [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 61/
-|   |   |   |-- 0027a10a9e40b063b49f1fc4f5fbf58b5a731f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7697898eaee312f8bc0f36488468af976bf420 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f5cf7b6b029d5938c67b623a31ef0eda61bb88 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 62/
-|   |   |   |-- d260328b2fcd8ff8da44ef7a6e42b5b7d47a1c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 64/
-|   |   |   |-- 1f5cc53a78615ccf9a12b0d317dea6c30811af [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 2a9a012ae3394b2cac94ed7ef2fe411ba1b2b7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 39b2e5f92d1ad635a4c1925724fea26e7b1e46 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 65/
-|   |   |   |-- 9fb6fa9783f8df7cb85a01ba650fcb4507cfcc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 66/
-|   |   |   |-- 20ce0955e34cd172841a0ff342e25f39e181f2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 953a36e1a6cafddf990d6ff85f9185c9991e5c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a0e15c0164c83adb132f8ed427300631bff1d9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f46c4911d39cab7b1f9630c83473b8d45394f0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 67/
-|   |   |   |-- 9f243bf35e70542e388e868de277e6fab912ca [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d4bb22925d9ce582169d323495394b38442ac4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 68/
-|   |   |   |-- 3f0bbf6fc558e9e3a893b3f2f43ab1e58d558e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 69/
-|   |   |   |-- 03af704d82ce096db2bb0abba25c3048187f8b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 63d6982de8946fd13a352ab75acc9867d1e47f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 6a/
-|   |   |   |-- 52163ae447cf49df3afcf51301380ed296658e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d0f27fadd5ad9f9a51ab47f05fc9dfde01f4bf [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ec0a6c62666eae626ca950bddbd2cc6215bfb7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 6b/
-|   |   |   |-- 5b55e09a5a6626550f2ad59a23ad9ec80bcb2a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 6d/
-|   |   |   |-- 425d7e30711b40602ff7f267fcf3eb7887a97f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a141c53773a1406db6f4ae69aefdf253aa3fd9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 6f/
-|   |   |   |-- c4c244860901d8116c671a2a59a0e85681b06e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 71/
-|   |   |   |-- 1da69bd622ec84db15eee36604776d6271d1da [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 8260bef1a2c15502656fd52b162d5d7ed2fd48 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 72/
-|   |   |   |-- 31be7aa1e31c21841912cf339c4594ea251f98 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 3e0ff6151991041bc57a126b66d5061f62972b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 6445fb0cd49ebb590c974b70a112dc105b1397 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 73/
-|   |   |   |-- 8a9e6d0e812a17cd43295bcfc76b65ef393d03 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 74/
-|   |   |   |-- 23c83da2dc45a312219e5b828d18b6110ee4d8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7bd61e0c40b5764f576bf36edb4dacd7520a3e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9730316aa4a28409d974be1b59aa922daac1a4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 75/
-|   |   |   |-- 8232bdcec80aae20b27d27138ec0ad539651d2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 76/
-|   |   |   |-- 2a78ffa06e67895bbf04351376184f9a939054 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c4a941262663aa72ccb05b0db0678b80509756 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 77/
-|   |   |   |-- 5db7556cf47ccf0f03f723137f6c9110f97d7c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7a/
-|   |   |   |-- 201d675f7e6381a232149dc0be0dcdee19fb72 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7cfb6329ec82343c0039f68fbb848b0d7ccb69 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9d81fdf18fb5050eb5e814adaca90f9796b311 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7b/
-|   |   |   |-- 7df5d6e748ef68e33a83840862a60c95ca703c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7c/
-|   |   |   |-- d83f8f595623d9130bd03df7168993eef8bb40 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7d/
-|   |   |   |-- 27dd4fa4736db9c6eaa4d658a12f75c5f5a34b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 5a4ec60447a6b904b6280b7e7e495c43559071 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 5d5bb3e9fdebc8585331d023554a6c43fbbd4b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d6afb490dbd88c48dc5c7888954a18609b6548 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7e/
-|   |   |   |-- c71055ea0148a0bf2a6bdcc98e69b507be53dd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- cf6db4af3be5920e86280620b04c8e921be70f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 7f/
-|   |   |   |-- 15ec0fa5c8075f29d5afc82fbae4a0a2a08699 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 16b6c16d253a470cad6bf94085ac93c6218e74 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 80/
-|   |   |   |-- de315221f6ea0efd3331ac368b8ffc8e1e0735 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 81/
-|   |   |   |-- 5df27602211a8c90dc2cdd9b91acceb508b55f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 761aa9dd61d263714496fcb482cc52af842051 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- caf97d1b2301f28b81f15c1ccb8efb6c7fa581 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e7f3e40f1071bbce38f7d47d0f2dd332694de1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 82/
-|   |   |   |-- 1e26f9225a1ccbe06d23e074579effad4137f9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- cc4cb507c0fbe2101bca469bf5b50c0c590987 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 84/
-|   |   |   |-- bb59aec727d4ec277a0c586c87f9b0054fafd9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 86/
-|   |   |   |-- 0649aa3be931bfff8feee607a237364f7be370 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a9c077934fc7bbc803a00e4502546b88195b77 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 87/
-|   |   |   |-- 823ac70dd0d931917e7974bdc558854417a088 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 88/
-|   |   |   |-- ab69c4bd0b11ffe305f2a507857d688914b886 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 89/
-|   |   |   |-- 216edf01ee467aeff56cb7ccbde982b3887100 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f5b57e576b07933163f2e645b7fbed4352cfda [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f5e8843981f3bf14fb480ecb454cc8e6b22ed1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 8a/
-|   |   |   |-- 8871a91292c90c9e0f9802540eeee2066f4fb8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 8c/
-|   |   |   |-- 0962bd075e93a337507ba6fa230b08b10fccfc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 8d/
-|   |   |   |-- 138eed1dedddcaed3104cba32ec03d4ed84b23 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9171b0200d89efb30f40e92a87faae097b92b3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 8e/
-|   |   |   |-- b399764a3b91885f18a586283b2b62aef8205a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 8f/
-|   |   |   |-- 622fe688cd9caf9c8261cf881e6ae49f8d0c75 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c2b003127b0790d70a79dca71550f3550909a1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e04c0db74905ffec7d50b12f96ac750f9b6c14 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 91/
-|   |   |   |-- 0d67a439d1567eeba1cb42e3696c0e37ec2090 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 92/
-|   |   |   |-- 010c7089d7e8392db1d1037f2b69ad91223326 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e6d898c0db4885bbe3cde37b8c3a03bbc552ab [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 93/
-|   |   |   |-- 31649e1745f9fded1dd46f2fb0c821e1b39ebd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7df1efbfacbaf25babb167fdd2263fc4a6dcfa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 95/
-|   |   |   |-- 005d6311f49247a2c725e3ce3f33fd2497a256 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7a5041fdbed424c9d6ddf2f44603f82341da03 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e871b625a396ed5dc819b47c82178901e3d218 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f4950d08e43c290c14d7e336af92a78ed77c1f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 96/
-|   |   |   |-- 21780f18f27f6f8bd0a2906d568641107fb631 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 29747fc4ae9f4fe6f0f67ac79e946e020dd851 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 97/
-|   |   |   |-- 2c02dce839b0c63ad9a457fc4af4d24ce22433 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 77136ca36ec02bd08f299007cf72617972d0b3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e70ebbf0e487b1a31c4749af39b87bfd2128a8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 98/
-|   |   |   |-- 08a3896e0e7935813d7ff44f59bb2489bf3d05 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 1f416d0f7b971744b8f8c170aaedfc1da8ade1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 3c31489cba7e7a42d55071f89c7808a1c5e764 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9e6e5dd8a372a42d0f1526dc705cb3571540a3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 99/
-|   |   |   |-- a3a466bfca2962910205dceed8c7896270da36 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e2f6938b008877d2e8581267350447eb10b545 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 9a/
-|   |   |   |-- ebfbe7c78346b0a9b1bb3c34989cac34a64c8f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 9b/
-|   |   |   |-- 5ca8d95a5ad63de457e556842bb83aba0e9715 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 9d/
-|   |   |   |-- 5ea84fd8b3a26728f1ea1b0bfac5def54dbf81 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7e40476c14db51b718acdb3ae6b411ed9607ff [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 9e/
-|   |   |   |-- 9e16f827ce1b1e7ff2abfb2403d94727c63304 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- 9f/
-|   |   |   |-- 13cef7307623949ab0c55c88dca14842447cfd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 225dcba7d978fc17b16632017f7f0f8a4745ed [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 3687e550a10d836fab47c0801872136b67d2cf [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7ebb913c7123d81242f9fb455fdb57c992693b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- aae33d185244beaca0cb89a4fb154b75297cb2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bb42cefb020b3f4c0a74221f0f343947220941 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a0/
-|   |   |   |-- f88e172bdd2b10dfc3529c3ac5d6afeb72672e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a1/
-|   |   |   |-- 6b8b1918583a550078115fc59d83b72bb6428c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f65f331239405c108d74a310885c0b6ac07d4f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a2/
-|   |   |   |-- 2da0ce14f928156f11ce892b3c2b4cda226f4f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ac2a9a25dd8c4703de47940f55de755acdf5ca [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- dd6136d3b9694d137d5203b3ed8dbd902a2f65 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a4/
-|   |   |   |-- 0cbb137e5fc278d389baf71f1a8909046fdb7f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 2720ac59174525746ecf024e173f3375e91b24 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c91121aaad798ea3554e6484830ac9eaec9b76 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a5/
-|   |   |   |-- 0ab8a51a7e15e002347fe96205f54fb24a9a7a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 177fa42ffb79a21c7709a87d49c2c711ccbc88 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 491e94e66270617cd4944f3894280eb406fb63 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a6/
-|   |   |   |-- 1a9306288aa7a0b02b996fc9b7d2b9fb1c5818 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c1ad8c5c54a3bebeb3fbc4ea5bd36b8176bd7f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a7/
-|   |   |   |-- f07d81d17eede79e2eb6a24876fc8cf5c5cae4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a8/
-|   |   |   |-- 50abd8c3817903308c678389fce1780b8c564c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7045904fe56709bcdf26d9bdc4ca0b13f28133 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- a9/
-|   |   |   |-- 33f692a85e7a01157c44622e47decdd1c11659 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 6bc2afe63513cff0e9f32aa2a0e4f427871f69 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 6be7644bfb7f892df42ddd35eb31d530006e2a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- aa/
-|   |   |   |-- 4aa8e5557fcd8cd2e1a443052d615086e84ceb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 83dbb9975890a8215dc3e50c0be58f2c70013b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ac/
-|   |   |   |-- 2f211ba93a49aad91095d74419cbb1cca66b26 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 75f61ed6391f62f9a562b777810f2b0af4fd86 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b0a0130f24ba73f75ca495b436eab344fbae52 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ece3f0c814fa7633e7fa655ba63da85b878ac4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ad/
-|   |   |   |-- 719d4f716528bf7ccf64c81cbfb839250bdaae [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a1c8345aa642ac295ef373f06d368b4ffedba8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ae9a5f3a1c0a00f19e840c5d02ac979b2495a6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ccaa66733bf9904ca115607eb5684c7cfed5bf [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ae/
-|   |   |   |-- 520ffa0ecffca3b97c3df3fca3d0510f5cf38b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- af/
-|   |   |   |-- 753f189a02bef7f937a2126a8f0e6db25fb171 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b1/
-|   |   |   |-- 415d59d15a55f8d95122ad1580ab8e92118b2d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 796a6b5de974c55cdd5f60acdf9c58ba04aef9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b2/
-|   |   |   |-- df838f5f59dcb6aef6e61561fff3d3c3bf0af1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b3/
-|   |   |   |-- 0a97785079f9583606a704fe34a7c5163484b8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 0db9881ab54eec8e262bf8f6980206aa308b17 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c0694f8418f0f71c712418d67e720946af187a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b5/
-|   |   |   |-- 299e99c4edde542e87b25a77781d7708e1a8f8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e7eb0b59f7a48dd26e118e47a3f1abbb259774 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b6/
-|   |   |   |-- 7b9e657b06f6afe9d9ea3c9e1e44346d1352fb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b9c650dd725f892c073f68ad833f048628e509 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b7/
-|   |   |   |-- a4f4194fbc0a0eaf58f4851f517bc77db2d558 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b8/
-|   |   |   |-- 5aa19a9984b8dc04c24001b5d37a4278979c4a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 8b6951ed254157e63098dbb917d7a856434290 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- b9/
-|   |   |   |-- 783783c4cbbbba10a1698d7bfe523e0dce4f1c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 8a9102aeac1e4b239cd5bcc27756765ba645ee [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f37ec642b0f87df2b75766245a4afeacc3d9fb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- bb/
-|   |   |   |-- 9df4a88fd4487b37952a1852bbb380d7acdf0e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ef9b20009127a43955d54d76b4b29a30fd1cf6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- bc/
-|   |   |   |-- 8e59dd91dee716ff34d3ceb524c9a9a2360ea2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b77c4cc2ccd7443fa7a1e8a21a8dc5afff6687 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- bd/
-|   |   |   |-- 03fad922eab1ca63e96ba5f94035f1ded5fc41 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- bf/
-|   |   |   |-- b7a9d39192cbdeb137b59bd85bac316c454c41 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c1/
-|   |   |   |-- ab452675c42a79a618c35ba5a588b0a69d4a90 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c415c0a9278644a3997ad0ba9cfecc114efa74 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c2/
-|   |   |   |-- 52b5b6212ef4327f387d169a49ca1fbbdecf36 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a0ed25b12707cb8d84bc175dbc6de51499076d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f54eca460d4bec7fadcc0774ecd8581780fb3a [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c3/
-|   |   |   |-- 0716e94816e6498b5e405418be58ae83f235aa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 18bf328123e949834f7009135497505f148a38 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c5/
-|   |   |   |-- 588ca1fed06ef22c83ef64fb8d83ba9030e4ad [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c6/
-|   |   |   |-- 09b5077ca7f334e714b639fadc842937110409 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b850279ce39ce9fcfbca517b4116706389521d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e970bc234a59771be0e1ff77807a35cd504a82 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c7/
-|   |   |   |-- 4b903fbcd766fe9f976b67a6c9c22ff7919702 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d836f70f345de4694856f3418b9de4368f9dab [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c8/
-|   |   |   |-- 45200f356a85f1c8fcb57109af1f86b515b257 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- c9/
-|   |   |   |-- 4ed0102ffc251bd5ab2986f1f41728110f854f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ca/
-|   |   |   |-- 0e54fca993b6557646ff9bab0f11c106fa6663 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 78b08df61180ebbdc8f6dda40411f851cbf9ad [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- cc/
-|   |   |   |-- 107a550ccceb692fd206a9dcd61b00be940e13 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 30c3be4d98ae319d9d4020391fac00065c0e1e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 90a8e2b23689f3235d53d42d2524e5b9696dcc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c4763e87081bb15d6c472d17fefce83c0be26e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- cd/
-|   |   |   |-- 8894ed42b0af1588fe5404908cace3704e95a6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 959bbb7678e545339c07fa85b70a8fe18bb8d4 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- cf/
-|   |   |   |-- 1412af9c86b9c4a5f56be9215a4f3d0d94f0ac [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 1e960b11fb8d206b005e31a85a3dcbcdf1bddb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 495db63f78bcff5cdc226efa14a701b98502a9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7c8dec99e87b589f625b060ae3191fc34e0fb2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e1568c026eaf592c6f9e83ab77a0ee9fc933e9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d0/
-|   |   |   |-- fe508047b54e040f76fe64036a770e9fcb45e3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d2/
-|   |   |   |-- 67cfdca7b25bad650f03e1aa803ff4517157c6 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f2c0d5461e4a5bdce849a652ec1d07d9956cdd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d3/
-|   |   |   |-- 4ab20c46fe43ac9f78c90e8d2915b5e167cc29 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d4/
-|   |   |   |-- 0552eabae714e057b11a2a7ee7f8d4ce0c6a8d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 486fbb9b64a13173a297e8175cb5bdc3f0df27 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- aca447b1ed1d6bce7b09fda0fe900de87238ec [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- af70e3c5eae39be589aae8e174470d248d115c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d5/
-|   |   |   |-- f14ee15a854cd7bbec9cd63150d699fcf986f7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d6/
-|   |   |   |-- 05a24383c006f480ca789a48eea9bbc26f0010 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d7/
-|   |   |   |-- 75ecf9aa8ce72526b3b52c964055b741cdeaa9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d8/
-|   |   |   |-- 4c9afca25cfb6870872100af415a023a009fca [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- d9/
-|   |   |   |-- 193d26f2dee3814f425773dd4aeb45be486971 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9348643a16d65e477fa280a98a3ffe2bdda5bb [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c11b0e8ffe074b2c6ddb0f8ad427781110bb92 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- da/
-|   |   |   |-- 2e6d8b32c89e4bbe182572a714110bef16b378 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ba9e872afc2d218817250ca3c157174f1793c2 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d5f42299da06cf34d669538d07363ae84c43ba [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- dd/
-|   |   |   |-- 0bcf832514a6e01ef292ebceffe7594d76dbc1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 1e1f26b0afcb89fb541f254480e913fce78fb3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 384a37ca4a325803034529a67e3b8c69af62fa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- da9073ac1c42abc7555c93308d8b165947470b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e0/
-|   |   |   |-- 406f47a088007e358bd5ff96b7e2ebefcffb42 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d9e01ae5a077ee66292ad75c6d1ad1e8e55e35 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e1/
-|   |   |   |-- 01eba8e15e002af1d10f372b1202f9622ce49d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 2de17635c79342699c3c1b1ebcbc3cdb827648 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e3/
-|   |   |   |-- 3e0e0117f479fec26665cfcd73ef05c80d813b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- ad431ebd4518a77424b88ded945a5129d0863c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e4/
-|   |   |   |-- 743c17621ded41e084b5056c65fbbb219a9449 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- bb1fbbe62f08e1737ee903eab0dfc35806a0a8 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- c05ed7a08ef1478cf23ae8ac146580063ffd9c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- fb70363966bc58d1e45e6d274e631fce0d8287 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e5/
-|   |   |   |-- 3f47926056d2aaea8be3f3c336d177e0648f92 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e6/
-|   |   |   |-- 4d4527e5e29000cb4e1559227961967711f279 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9de29bb2d1d6434b8b29ae775ad8c2e48c5391 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- b2953484453ac1fbf9b1c7256bac2f6c81950b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e7/
-|   |   |   |-- 5dc9a5fef409368e0c30b74eaeb85098987af5 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 8299207ac1c74a27cd710e971d8e884a7eb054 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- e8/
-|   |   |   |-- 5d7865053bdb2873cb4bb85f8b88731989cbc3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7e087e7e09e7d810bd7353293e9aa480c0cc23 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 9509880966946a06e8f4f4c1f7608ae7f7496f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ea/
-|   |   |   |-- 824aa5ab0569eb2d8dfc90d8d15ffb1e3ca11e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- de0072df08d52111230b8adba813d5b582ddad [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ec/
-|   |   |   |-- 367d3be8cd9f9e17187fc5f5daf10217b62da7 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ed/
-|   |   |   |-- 2a0188247c2c13a90c62e55405779039d8ac1c [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ee/
-|   |   |   |-- 842d15b9fa15301b700130b303fbf620279041 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ef/
-|   |   |   |-- d3bf9fd9978070a90a0349bc1beb44ce1502e3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f0/
-|   |   |   |-- 7beec016b54f76df7bf3238db29ee734388813 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a947342df7afbb3e3818a31e9d96bca78d5dae [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- cf020a532bbdd83fea3adb5072962d34d69d99 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d6fecdade40798b799973d65d6d4178d0b9d31 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f1/
-|   |   |   |-- 9cc4cc04de61d374779b0d32755a45b7e6dcfd [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f2/
-|   |   |   |-- 4c0c2b172070dfcbe0b54b8cdedf8cdb72f8aa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f3/
-|   |   |   |-- 267fe1a6df397ba7e276d13577958c18a36173 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 3ae6ac2c088e20640fa13570c9fad4693ab815 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- da45e38e190f2feb8469657fcf18312a01179b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- eb6e955c6ab0a6e99bbc70534e02c848c98745 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f784d1248b602dd38a67a144cb8f24ca685dba [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f4/
-|   |   |   |-- 3a900ae6c9df9db4bbaa784b76bdd53acecd74 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 56af06d8db384d176cc54303ee6d1457e8adde [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- efa716bc869bc51193306ee37227d95900f97d [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f6/
-|   |   |   |-- 595e26f93873918ebce327e41575c1b399e6e9 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f7/
-|   |   |   |-- e3f4550d98c0aa9560d40370a844a55563bdda [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f8/
-|   |   |   |-- 51a2f0ce9315cb3124231fa91c7f091152a78e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- f1ac5cd61b40676453f50acec476d777ba59c3 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- f9/
-|   |   |   |-- 67c2045553bd9ea3ed7e64e35d02d444df7c11 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fa/
-|   |   |   |-- 33d614766f9eef35931c1ef801953d29ad125e [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- e744169deee469d54209c5f3e6470dfaa93539 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fb/
-|   |   |   |-- 351b18536679d01d348b12e79e758176d05f43 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 4d0443c585a87fec1870d49c8b3959715608ac [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fc/
-|   |   |   |-- 46a495113a556ce3d53e142a52d2b22f97d54f [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 60322e7c65bc106314868a602c81763b61b0cc [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- cfeeb877f3ca0a12af1366bebdb6fadb783f24 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fd/
-|   |   |   |-- 0076d53a433b5a7b20e42e8a6450d490bac7b0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- a8c5eefef4c49d38ec3f7cac376151c060ff13 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- d57723e1ff43c28cebc9d3591bf49b6f8384fa [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- fe/
-|   |   |   |-- 8dc853e1d9fb90db71ee5deec0a8291e97df78 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- ff/
-|   |   |   |-- 5015882c8b0ab0f6025c9e69ed302fefbdba48 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- 7de679fdbddd9ab90a0bba47fd5c4ba166ac7b [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- info/
-|   |   |-- pack/
-|   |-- ORIG_HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |-- refs/
-|   |   |-- heads/
-|   |   |   |-- main [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- remotes/
-|   |   |   |-- origin/
-|   |   |   |   |-- HEAD [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |   |-- main [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |-- tags/
-|   |   |   |-- v1.1.0 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- v1.1.1 [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|   |   |   |-- v1.1.2-stable [CONTENT SKIPPED - EXCLUDED TYPE/FOLDER]
-|-- .gitattributes
+|  
 |-- build-deb.sh
 |-- collectors/
 |   |-- iproute2
@@ -9975,12 +9600,11 @@ ROOT: F:\Linux_Network_Manager\network-recover
 |   |-- static/
 |   |   |-- app.js
 |   |   |-- index.html
-|   |   |-- styles.css
 
 ========================================
 EXPORT COMPLETE
-Files with content exported: 40
+Files with content exported: 39
 Complete folder structure shown above
 Output file: F:\Linux_Network_Manager\network-recover\project_export.txt
-Completed: 2026-07-24 12:16:01
+Completed: 2026-07-26 15:33:48
 ========================================

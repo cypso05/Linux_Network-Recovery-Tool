@@ -1,0 +1,669 @@
+﻿========================================
+PROJECT EXPORT
+Generated: 2026-07-26 15:40:52
+
+Input Paths:
+F:\Linux_Network_Manager\network-recover\collectors
+F:\Linux_Network_Manager\network-recover\diagnostics
+
+Total files with content exported: 15
+(Full folder structure follows, including skipped files)
+========================================
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\collectors\iproute2
+FULL PATH: F:\Linux_Network_Manager\network-recover\collectors\iproute2
+SIZE: 0.35 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+collect_iproute2() {
+    echo "=== ip addr show ==="
+    ip addr show 2>/dev/null
+    echo ""
+    echo "=== ip route show ==="
+    ip route show 2>/dev/null
+    echo ""
+    echo "=== ip neigh show ==="
+    ip neigh show 2>/dev/null
+    echo ""
+    echo "=== bridge link show ==="
+    bridge link show 2>/dev/null || echo "  No bridges"
+    return 0
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\collectors\journalctl
+FULL PATH: F:\Linux_Network_Manager\network-recover\collectors\journalctl
+SIZE: 0.21 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+collect_journalctl() {
+    echo "=== journalctl (NetworkManager last 50 lines) ==="
+    journalctl -u NetworkManager -n 50 --no-pager 2>/dev/null || echo "  No NetworkManager logs available"
+    return 0
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\collectors\libvirt
+FULL PATH: F:\Linux_Network_Manager\network-recover\collectors\libvirt
+SIZE: 0.34 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+collect_libvirt() {
+    if ! command -v virsh &>/dev/null; then
+        echo "=== libvirt: not installed ==="
+        return 0
+    fi
+    echo "=== virsh list --all ==="
+    virsh list --all 2>/dev/null
+    echo ""
+    echo "=== virsh net-list --all ==="
+    virsh net-list --all 2>/dev/null || echo "  No virtual networks"
+    return 0
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\collectors\nmcli
+FULL PATH: F:\Linux_Network_Manager\network-recover\collectors\nmcli
+SIZE: 0.4 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+collect_nmcli() {
+    echo "=== nmcli general status ==="
+    nmcli general status 2>/dev/null || echo "  nmcli not available"
+    echo ""
+    echo "=== nmcli device status ==="
+    nmcli device status 2>/dev/null || echo "  nmcli not available"
+    echo ""
+    echo "=== nmcli active connections ==="
+    nmcli connection show --active 2>/dev/null || echo "  nmcli not available"
+    return 0
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\collectors\resolvectl
+FULL PATH: F:\Linux_Network_Manager\network-recover\collectors\resolvectl
+SIZE: 0.26 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+collect_resolvectl() {
+    echo "=== resolvectl status ==="
+    resolvectl status 2>/dev/null || echo "  resolvectl not available"
+    echo ""
+    echo "=== /etc/resolv.conf ==="
+    cat /etc/resolv.conf 2>/dev/null || echo "  No resolv.conf"
+    return 0
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\bridge
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\bridge
+SIZE: 0.69 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_bridge() {
+    local bridge="${1:-$BRIDGE_IFACE}"
+    local iface="${2:-$DEFAULT_IFACE}"
+    local all_pass=true
+    
+    if [[ -z "$bridge" ]]; then
+        echo "  â„¹ï¸  No bridge configured"
+        return 0
+    fi
+    
+    if ip link show "$bridge" 2>/dev/null | grep -q "UP"; then
+        echo "  âœ… Bridge $bridge is UP"
+    else
+        echo "  âŒ Bridge $bridge is DOWN"
+        all_pass=false
+    fi
+    
+    if bridge link show "$bridge" 2>/dev/null | grep -q "$iface"; then
+        echo "  âœ… $iface enslaved to $bridge"
+    else
+        echo "  âŒ $iface NOT enslaved to $bridge"
+        all_pass=false
+    fi
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\dns
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\dns
+SIZE: 0.26 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_dns() {
+    local domain="${1:-google.com}"
+    
+    if nslookup "$domain" &>/dev/null; then
+        echo "  âœ… DNS resolution works ($domain)"
+        return 0
+    else
+        echo "  âŒ DNS resolution failed for $domain"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\gateway
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\gateway
+SIZE: 0.42 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_gateway() {
+    local gateway="${1:-$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)}"
+    
+    if [[ -z "$gateway" ]]; then
+        echo "  âŒ No gateway configured"
+        return 1
+    fi
+    
+    if ping -c 1 -W 2 "$gateway" &>/dev/null; then
+        echo "  âœ… Gateway $gateway reachable"
+        return 0
+    else
+        echo "  âŒ Gateway $gateway unreachable"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\https
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\https
+SIZE: 2.34 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+# diagnostics/https - HTTPS connectivity diagnostic with HTTP fallback
+# Usage: check_https [url]
+
+check_https() {
+    local all_pass=true
+    local https_urls=(
+        "https://cloudflare.com"
+        "https://google.com"
+        "https://github.com"
+    )
+    local portal_url="http://connectivitycheck.gstatic.com/generate_204"
+    
+    # Allow override via argument
+    if [[ -n "${1:-}" ]]; then
+        https_urls=("$1")
+    fi
+    
+    if ! command -v curl &>/dev/null; then
+        echo "  âš ï¸  curl not installed - HTTPS tests skipped"
+        return 1
+    fi
+    
+    echo "  ðŸ“Œ Testing HTTPS connectivity..."
+    
+    local success_count=0
+    local total_urls=${#https_urls[@]}
+    
+    # Test HTTPS targets
+    for url in "${https_urls[@]}"; do
+        local http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)
+        
+        if [[ "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
+            echo "  âœ… HTTPS: $url (HTTP $http_code)"
+            ((success_count++))
+        elif [[ "$http_code" == "000" ]]; then
+            echo "  âŒ HTTPS: $url (connection failed)"
+            all_pass=false
+        else
+            echo "  âš ï¸  HTTPS: $url (HTTP $http_code)"
+            all_pass=false
+        fi
+    done
+    
+    # Always test for captive portal (can intercept even when some HTTPS works)
+    echo ""
+    echo "  ðŸ“Œ Testing for captive portal..."
+    local portal_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 5 --max-time 10 "$portal_url" 2>/dev/null)
+    
+    if [[ "$portal_code" == "204" ]]; then
+        echo "  âœ… No captive portal detected"
+    elif [[ "$portal_code" =~ ^[23][0-9][0-9]$ ]]; then
+        echo "  âš ï¸  Possible captive portal (HTTP $portal_code)"
+        echo "  â„¹ï¸  You may need to log in to the network"
+        all_pass=false
+    elif [[ "$portal_code" == "000" ]]; then
+        echo "  âŒ Captive portal test: connection failed"
+        all_pass=false
+    else
+        echo "  âš ï¸  Captive portal test: unexpected response (HTTP $portal_code)"
+        all_pass=false
+    fi
+    
+    # Summary
+    if [[ $success_count -ge 1 ]]; then
+        echo "  âœ… HTTPS connectivity OK ($success_count/$total_urls)"
+        return 0
+    else
+        echo "  âŒ HTTPS connectivity FAILED (0/$total_urls)"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\interface
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\interface
+SIZE: 5.02 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+# diagnostics/interface - interface layer diagnostic
+# Usage: check_interface [iface]
+# Enhanced with detailed interface information and production-ready output
+
+check_interface() {
+    local iface="${1:-$DEFAULT_IFACE}"
+    local all_pass=true
+    
+    # Check if interface exists
+    if [[ ! -d "/sys/class/net/$iface" ]]; then
+        echo "  âŒ Interface $iface does not exist"
+        return 1
+    fi
+    
+    # Gather interface details
+    local operstate=$(cat "/sys/class/net/$iface/operstate" 2>/dev/null || echo "unknown")
+    local mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null || echo "unknown")
+    local mtu=$(cat "/sys/class/net/$iface/mtu" 2>/dev/null || echo "unknown")
+    local carrier=$(cat "/sys/class/net/$iface/carrier" 2>/dev/null || echo "0")
+    local speed=$(cat "/sys/class/net/$iface/speed" 2>/dev/null || echo "unknown")
+    local duplex=$(cat "/sys/class/net/$iface/duplex" 2>/dev/null || echo "unknown")
+    local flags=$(ip link show "$iface" 2>/dev/null | grep -oP 'flags=\K[^ ]+' || echo "unknown")
+    
+    # Determine interface type
+    local iface_type="unknown"
+    if [[ -d "/sys/class/net/$iface/wireless" ]] || [[ -d "/sys/class/net/$iface/phy80211" ]]; then
+        iface_type="wireless"
+    elif [[ -d "/sys/class/net/$iface/bridge" ]]; then
+        iface_type="bridge"
+    elif [[ -d "/sys/class/net/$iface/bonding" ]]; then
+        iface_type="bond"
+    elif [[ "$iface" =~ ^(vnet|virbr) ]]; then
+        iface_type="virtual"
+    else
+        iface_type="ethernet"
+    fi
+    
+    # Display interface info with nice formatting
+    echo "  â”Œâ”€ Interface: $iface"
+    echo "  â”‚  Type: $iface_type"
+    echo "  â”‚  MAC: $mac"
+    echo "  â”‚  MTU: $mtu"
+    echo "  â”‚  Flags: $flags"
+    echo "  â”‚  State: $operstate"
+    
+    # Additional details based on interface type
+    case "$iface_type" in
+        wireless)
+            local ssid=$(iwconfig "$iface" 2>/dev/null | grep -oP 'ESSID:"\K[^"]+' || echo "not connected")
+            local signal=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Signal level=\K[0-9-]+' || echo "unknown")
+            local freq=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Frequency:\K[0-9.]+ GHz' || echo "unknown")
+            echo "  â”‚  SSID: $ssid"
+            echo "  â”‚  Signal: ${signal} dBm"
+            echo "  â”‚  Frequency: $freq"
+            ;;
+        bridge)
+            local slaves=$(bridge link show "$iface" 2>/dev/null | grep -oP '^[0-9]+: \K[^:]+' | tr '\n' ', ' | sed 's/, $//')
+            echo "  â”‚  Slaves: ${slaves:-none}"
+            ;;
+        ethernet)
+            [[ "$speed" != "unknown" ]] && echo "  â”‚  Speed: $speed Mb/s"
+            [[ "$duplex" != "unknown" ]] && echo "  â”‚  Duplex: $duplex"
+            ;;
+    esac
+    
+    echo "  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€"
+    
+    # Check if carrier is present (link detected)
+    if [[ "$carrier" == "1" ]]; then
+        echo "  âœ… Carrier: present"
+    else
+        if [[ "$iface_type" == "wireless" ]]; then
+            echo "  âš ï¸  Carrier: no WiFi connection"
+        else
+            echo "  âŒ Carrier: LOST - Check cable"
+        fi
+        all_pass=false
+    fi
+    
+    # Check interface state
+    if [[ "$operstate" == "up" ]]; then
+        echo "  âœ… Interface state: $operstate"
+    elif [[ "$operstate" == "dormant" ]]; then
+        echo "  âš ï¸  Interface state: $operstate (waiting for carrier)"
+        all_pass=false
+    else
+        echo "  âŒ Interface state: $operstate (should be up)"
+        all_pass=false
+    fi
+    
+    # Check if interface is UP from ip command
+    if ip link show "$iface" 2>/dev/null | grep -q "UP"; then
+        echo "  âœ… Interface flags: UP"
+    else
+        echo "  âŒ Interface flags: DOWN"
+        all_pass=false
+    fi
+    
+    # Check MTU sanity
+    if [[ "$mtu" != "unknown" ]] && [[ "$mtu" -lt 1280 ]]; then
+        echo "  âš ï¸  MTU is very low ($mtu) - may cause issues"
+        all_pass=false
+    fi
+    
+    # Check for interface errors
+    local rx_errors=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo "0")
+    local tx_errors=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo "0")
+    if [[ "$rx_errors" != "0" ]] || [[ "$tx_errors" != "0" ]]; then
+        echo "  âš ï¸  Errors: RX=$rx_errors, TX=$tx_errors"
+        all_pass=false
+    fi
+    
+    # Check for dropped packets
+    local rx_dropped=$(cat "/sys/class/net/$iface/statistics/rx_dropped" 2>/dev/null || echo "0")
+    local tx_dropped=$(cat "/sys/class/net/$iface/statistics/tx_dropped" 2>/dev/null || echo "0")
+    if [[ "$rx_dropped" != "0" ]] || [[ "$tx_dropped" != "0" ]]; then
+        echo "  âš ï¸  Dropped: RX=$rx_dropped, TX=$tx_dropped"
+        all_pass=false
+    fi
+    
+    # Check for collisions
+    local collisions=$(cat "/sys/class/net/$iface/statistics/collisions" 2>/dev/null || echo "0")
+    if [[ "$collisions" != "0" ]]; then
+        echo "  âš ï¸  Collisions: $collisions"
+        all_pass=false
+    fi
+    
+    echo ""
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\ip
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\ip
+SIZE: 0.35 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_ip() {
+    local iface="${1:-${BRIDGE_IFACE:-$DEFAULT_IFACE}}"
+    
+    local ipv4=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -1)
+    
+    if [[ -n "$ipv4" ]]; then
+        echo "  âœ… IPv4: $ipv4"
+        return 0
+    else
+        echo "  âŒ No IPv4 address on $iface"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\kvm
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\kvm
+SIZE: 0.5 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_kvm() {
+    if ! command -v virsh &>/dev/null; then
+        echo "  â„¹ï¸  libvirt not installed"
+        return 0
+    fi
+    
+    if systemctl is-active libvirtd &>/dev/null; then
+        local running=$(virsh list --state-running --name 2>/dev/null | wc -l)
+        local total=$(virsh list --all --name 2>/dev/null | wc -l)
+        echo "  âœ… libvirtd running - $running/$total VMs active"
+        return 0
+    else
+        echo "  âš ï¸  libvirtd not running"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\networkmanager
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\networkmanager
+SIZE: 0.48 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_networkmanager() {
+    if ! command -v nmcli &>/dev/null; then
+        echo "  â„¹ï¸  NetworkManager not installed"
+        return 0
+    fi
+    
+    if systemctl is-active NetworkManager &>/dev/null; then
+        local state=$(nmcli -t -f GENERAL.STATE general status 2>/dev/null | cut -d: -f2)
+        echo "  âœ… NetworkManager is running (state: ${state:-unknown})"
+        return 0
+    else
+        echo "  âŒ NetworkManager is NOT running"
+        return 1
+    fi
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\physical
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\physical
+SIZE: 4.54 KB
+LAST MODIFIED: 06/25/2026 04:21:21
+----------------------------------------
+
+#!/bin/bash
+# diagnostics/physical - physical layer diagnostic
+# Usage: check_physical [iface]
+# Enhanced with detailed physical layer information
+
+check_physical() {
+    local all_pass=true
+    local iface="${1:-$DEFAULT_IFACE}"
+    
+    echo "  â”Œâ”€ Physical Layer: $iface"
+    
+    # Check if interface exists
+    if [[ ! -d "/sys/class/net/$iface" ]]; then
+        echo "  â”‚  âŒ Interface does not exist"
+        echo "  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€"
+        return 1
+    fi
+    
+    # Determine interface type
+    local iface_type="unknown"
+    if [[ -d "/sys/class/net/$iface/wireless" ]] || [[ -d "/sys/class/net/$iface/phy80211" ]]; then
+        iface_type="wireless"
+    elif [[ -d "/sys/class/net/$iface/bridge" ]]; then
+        iface_type="bridge"
+    else
+        iface_type="ethernet"
+    fi
+    echo "  â”‚  Type: $iface_type"
+    
+    # Check carrier (link detection)
+    if [[ -f "/sys/class/net/$iface/carrier" ]]; then
+        local carrier=$(cat "/sys/class/net/$iface/carrier")
+        if [[ "$carrier" == "1" ]]; then
+            echo "  â”‚  âœ… Carrier: present"
+        else
+            if [[ "$iface_type" == "wireless" ]]; then
+                echo "  â”‚  âš ï¸  Carrier: no WiFi connection"
+            else
+                echo "  â”‚  âŒ Carrier: LOST - Check cable"
+            fi
+            all_pass=false
+        fi
+    fi
+    
+    # Check operstate
+    if [[ -f "/sys/class/net/$iface/operstate" ]]; then
+        local state=$(cat "/sys/class/net/$iface/operstate")
+        case "$state" in
+            up)
+                echo "  â”‚  âœ… State: $state"
+                ;;
+            down)
+                echo "  â”‚  âŒ State: $state (interface is down)"
+                all_pass=false
+                ;;
+            dormant)
+                echo "  â”‚  âš ï¸  State: $state (waiting for carrier)"
+                all_pass=false
+                ;;
+            *)
+                echo "  â”‚  âŒ State: $state (unexpected)"
+                all_pass=false
+                ;;
+        esac
+    fi
+    
+    # Check link speed (ethernet only)
+    if [[ "$iface_type" == "ethernet" ]] && command -v ethtool &>/dev/null; then
+        if [[ -e "/sys/class/net/$iface/device" ]]; then
+            local speed=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Speed:" | awk '{print $2}')
+            local duplex=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Duplex:" | awk '{print $2}')
+            local link=$(timeout 2 ethtool "$iface" 2>/dev/null | grep -i "Link detected:" | awk '{print $3}')
+            
+            if [[ -n "$speed" ]] && [[ "$speed" != "Unknown!" ]]; then
+                echo "  â”‚  Speed: $speed"
+            fi
+            if [[ -n "$duplex" ]] && [[ "$duplex" != "Unknown!" ]]; then
+                echo "  â”‚  Duplex: $duplex"
+            fi
+            if [[ -n "$link" ]]; then
+                if [[ "$link" == "yes" ]]; then
+                    echo "  â”‚  âœ… Link detected: yes"
+                else
+                    echo "  â”‚  âŒ Link detected: no"
+                    all_pass=false
+                fi
+            fi
+        fi
+    fi
+    
+    # WiFi signal strength
+    if [[ "$iface_type" == "wireless" ]] && command -v iwconfig &>/dev/null; then
+        local signal=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Signal level=\K[0-9-]+' || echo "")
+        local quality=$(iwconfig "$iface" 2>/dev/null | grep -oP 'Quality=\K[0-9/]+' || echo "")
+        if [[ -n "$signal" ]]; then
+            echo "  â”‚  Signal: ${signal} dBm"
+            # Interpret signal strength
+            if [[ "$signal" -gt -50 ]]; then
+                echo "  â”‚  ðŸ“¶ Excellent"
+            elif [[ "$signal" -gt -60 ]]; then
+                echo "  â”‚  ðŸ“¶ Good"
+            elif [[ "$signal" -gt -70 ]]; then
+                echo "  â”‚  ðŸ“¶ Fair"
+            else
+                echo "  â”‚  ðŸ“¶ Poor"
+            fi
+        fi
+        if [[ -n "$quality" ]]; then
+            echo "  â”‚  Quality: $quality"
+        fi
+    fi
+    
+    # Check for interface errors
+    local rx_errors=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo "0")
+    local tx_errors=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo "0")
+    if [[ "$rx_errors" != "0" ]] || [[ "$tx_errors" != "0" ]]; then
+        echo "  â”‚  âš ï¸  Errors: RX=$rx_errors, TX=$tx_errors"
+        all_pass=false
+    fi
+    
+    echo "  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€"
+    echo ""
+    
+    [[ "$all_pass" == "true" ]] && return 0 || return 1
+}
+
+----------------------------------------
+FILE: F:\Linux_Network_Manager\network-recover\diagnostics\routing
+FULL PATH: F:\Linux_Network_Manager\network-recover\diagnostics\routing
+SIZE: 0.28 KB
+LAST MODIFIED: 06/24/2026 23:42:46
+----------------------------------------
+
+#!/bin/bash
+check_routing() {
+    local gateway=$(ip route | awk '/default/ {print $3; exit}' 2>/dev/null)
+    
+    if [[ -n "$gateway" ]]; then
+        echo "  âœ… Default gateway: $gateway"
+        return 0
+    else
+        echo "  âŒ No default route found"
+        return 1
+    fi
+}
+
+
+========================================
+COMPLETE FOLDER STRUCTURE
+(All files and folders are shown here,
+ even if their contents were skipped)
+========================================
+
+
+ROOT: F:\Linux_Network_Manager\network-recover\collectors
+
+|-- iproute2
+|-- journalctl
+|-- libvirt
+|-- nmcli
+|-- resolvectl
+
+ROOT: F:\Linux_Network_Manager\network-recover\diagnostics
+
+|-- bridge
+|-- dns
+|-- gateway
+|-- https
+|-- interface
+|-- ip
+|-- kvm
+|-- networkmanager
+|-- physical
+|-- routing
+
+========================================
+EXPORT COMPLETE
+Files with content exported: 15
+Complete folder structure shown above
+Output file: F:\Linux_Network_Manager\network-recover\collectors\project_export.txt
+Completed: 2026-07-26 15:40:52
+========================================
