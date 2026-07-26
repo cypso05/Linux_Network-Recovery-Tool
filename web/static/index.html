@@ -575,17 +575,17 @@
     .btn-warning { background: var(--warning); border-color: var(--warning); color: white; }
     .btn-warning:hover { background: #d97706; border-color: #d97706; }
     
-    /* Status Bar */
+    /* ============ STATUS BAR (BLUE - matches header) ============ */
     .status-bar {
-        background: var(--card-bg);
+        background: var(--header-bg);
         height: var(--statusbar-height);
         padding: 0 20px;
         display: flex;
         align-items: center;
         gap: 24px;
         font-size: 11px;
-        color: var(--text-muted);
-        border-top: 1px solid var(--card-border);
+        color: rgba(255,255,255,0.7);
+        border-top: 1px solid rgba(255,255,255,0.1);
         flex-shrink: 0;
         overflow-x: auto;
     }
@@ -594,6 +594,33 @@
         align-items: center;
         gap: 6px;
         white-space: nowrap;
+        color: rgba(255,255,255,0.7);
+    }
+    .status-bar-item span {
+        color: rgba(255,255,255,0.9);
+    }
+    
+    /* Terminal toggle button in status bar */
+    .terminal-toggle-btn {
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: rgba(255,255,255,0.8);
+        padding: 3px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+        font-family: 'SF Mono', Consolas, monospace;
+        transition: all 0.15s;
+        margin-left: auto;
+    }
+    .terminal-toggle-btn:hover {
+        background: rgba(255,255,255,0.2);
+        color: white;
+    }
+    .terminal-toggle-btn.active {
+        background: rgba(59, 109, 240, 0.4);
+        border-color: rgba(59, 109, 240, 0.6);
+        color: white;
     }
     
     /* Job items */
@@ -667,21 +694,6 @@
     }
     .multiselect-bar .btn:hover { background: rgba(255,255,255,0.35); }
     
-    /* Terminal */
-    .terminal {
-        background: #0d1117;
-        color: #58a6ff;
-        font-family: 'SF Mono', Consolas, 'Courier New', monospace;
-        padding: 16px;
-        border-radius: 10px;
-        height: 300px;
-        overflow-y: auto;
-        font-size: 13px;
-        line-height: 1.6;
-    }
-    .terminal-line { white-space: pre-wrap; }
-    .terminal-prompt { color: #79c0ff; font-weight: 600; }
-    
     /* Tabs */
     .tabs {
         display: flex;
@@ -716,6 +728,117 @@
         color: #065f46;
         font-size: 18px;
         margin-bottom: 18px;
+    }
+    
+    /* ============ TERMINAL PANEL (Azure Cloud Shell style) ============ */
+    .terminal-panel {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 40%;
+        min-height: 250px;
+        background: #0d1117;
+        border-top: 2px solid #30363d;
+        z-index: 500;
+        transform: translateY(100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+    }
+    .terminal-panel.open {
+        transform: translateY(0);
+    }
+    .terminal-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        background: #161b22;
+        border-bottom: 1px solid #30363d;
+        flex-shrink: 0;
+    }
+    .terminal-panel-header .terminal-title {
+        font-size: 12px;
+        color: #8b949e;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .terminal-panel-header .terminal-title .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #3fb950;
+    }
+    .terminal-panel-header .terminal-actions {
+        display: flex;
+        gap: 4px;
+    }
+    .terminal-panel-header .terminal-actions button {
+        background: none;
+        border: none;
+        color: #8b949e;
+        cursor: pointer;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        transition: all 0.15s;
+    }
+    .terminal-panel-header .terminal-actions button:hover {
+        background: #21262d;
+        color: #c9d1d9;
+    }
+    .terminal-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 16px;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #c9d1d9;
+        background: #0d1117;
+    }
+    .terminal-output-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding: 1px 0;
+    }
+    .terminal-output-line.info { color: #8b949e; }
+    .terminal-output-line.success { color: #3fb950; }
+    .terminal-output-line.error { color: #f85149; }
+    .terminal-output-line.warning { color: #d29922; }
+    .terminal-output-line.command { color: #58a6ff; }
+    .terminal-input-line {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px;
+        background: #0d1117;
+        border-top: 1px solid #21262d;
+        flex-shrink: 0;
+    }
+    .terminal-prompt-symbol {
+        color: #3fb950;
+        font-weight: bold;
+        margin-right: 8px;
+        font-family: 'SF Mono', 'Cascadia Code', monospace;
+        font-size: 13px;
+        white-space: nowrap;
+    }
+    .terminal-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        color: #c9d1d9;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace;
+        font-size: 13px;
+        outline: none;
+        caret-color: #58a6ff;
+    }
+    .terminal-input::placeholder {
+        color: #484f58;
     }
     
     /* Scrollbar */
@@ -857,41 +980,42 @@
         <div class="drawer-actions" id="drawer-actions"></div>
     </div>
     
-        <!-- TERMINAL - OLD (hidden by default, kept for compatibility) -->
-        <div class="terminal" id="terminal" style="display:none;">
-            <div id="terminal-output-old">
-                <div class="terminal-line"><span class="terminal-prompt">$ </span>Ready</div>
+        <!-- TERMINAL PANEL (slides up from bottom - Azure Cloud Shell style) -->
+        <div class="terminal-panel" id="terminal-panel">
+            <div class="terminal-panel-header">
+                <div class="terminal-title">
+                    <span class="dot"></span>
+                    bash - Infrastructure Operations Center
+                </div>
+                <div class="terminal-actions">
+                    <button onclick="clearTerminal()" title="Clear terminal">Clear</button>
+                    <button onclick="toggleTerminal()" title="Close terminal (Ctrl+`)">✕</button>
+                </div>
+            </div>
+            <div class="terminal-body" id="terminal-output">
+                <div class="terminal-output-line info">╔══════════════════════════════════════════╗</div>
+                <div class="terminal-output-line info">║  Infrastructure Operations Center Shell  ║</div>
+                <div class="terminal-output-line info">║  Type 'help' for available commands      ║</div>
+                <div class="terminal-output-line info">╚══════════════════════════════════════════╝</div>
+                <div class="terminal-output-line" style="color:#8b949e;">$ Connected to mx — Press ↑ for history</div>
+            </div>
+            <div class="terminal-input-line">
+                <span class="terminal-prompt-symbol">$</span>
+                <input type="text" class="terminal-input" id="terminal-input" placeholder="Enter command..." autocomplete="off" spellcheck="false">
             </div>
         </div>
-        
-        <!-- TERMINAL - NEW & IMPROVED -->
-        <div class="terminal-container" id="terminal-container" style="display:none; margin: 12px 16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">
-                <span style="color:#6a7090;font-size:11px;">>_ Terminal</span>
-                <button onclick="clearTerminal()" style="background:none;border:none;color:#6a7090;cursor:pointer;font-size:11px;">Clear</button>
-            </div>
-            <div id="terminal-output">
-                <div class="terminal-output info">Welcome to Infrastructure Operations Center Terminal</div>
-                <div class="terminal-output" style="color:#6a7090;">Type commands and press Enter</div>
-                <div class="terminal-output" style="color:#6a7090;">Examples: ping 8.8.8.8, kubectl get pods, virsh list</div>
-                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">─────────────────────────────────────────────</div>
-            </div>
-            <div class="terminal-input-line" style="margin-top:8px;">
-                <span class="terminal-prompt">$</span>
-                <input type="text" class="terminal-input" id="terminal-input" placeholder="Enter command..." autofocus>
-            </div>
-        </div>
-        
-        <!-- STATUS BAR -->
+
+            <!-- STATUS BAR (blue to match header) -->
         <div class="status-bar">
-        <span class="status-bar-item">● <span id="sb-connection">Connected</span></span>
-        <span class="status-bar-item">⏱ <span id="sb-last-update">0.0s ago</span></span>
-        <span class="status-bar-item">🖥 <span id="sb-hosts">1 Host</span></span>
-        <span class="status-bar-item">📦 <span id="sb-vms">0 VMs</span></span>
-        <span class="status-bar-item">⬛ <span id="sb-pods">0 Pods</span></span>
-        <span class="status-bar-item">🔗 <span id="sb-services">0 Services</span></span>
-        <span style="margin-left:auto;">v3.1.0</span>
-    </div>
+            <span class="status-bar-item">● <span id="sb-connection">Connected</span></span>
+            <span class="status-bar-item">⏱ <span id="sb-last-update">0.0s ago</span></span>
+            <span class="status-bar-item">🖥 <span id="sb-hosts">1 Host</span></span>
+            <span class="status-bar-item">📦 <span id="sb-vms">0 VMs</span></span>
+            <span class="status-bar-item">⬛ <span id="sb-pods">0 Pods</span></span>
+            <span class="status-bar-item">🔗 <span id="sb-services">0 Services</span></span>
+            <button class="terminal-toggle-btn" onclick="toggleTerminal()" title="Toggle Terminal (Ctrl+`)">>_ Terminal</button>
+            <span style="margin-left:8px;">v3.1.0</span>
+        </div>
 
     <script>
         // ============================================================
@@ -918,40 +1042,53 @@
         // ============================================================
         // WEBSOCKET
         // ============================================================
-        function connectWebSocket() {
-            state.ws = new WebSocket(wsUrl);
-            
-            state.ws.onopen = () => {
-                console.log('WebSocket connected');
-                state.connected = true;
-                document.getElementById('status-dot').className = 'status-dot';
-                document.getElementById('sb-connection').textContent = 'Connected';
+       function connectWebSocket() {
+        state.ws = new WebSocket(wsUrl);
+        
+        state.ws.onopen = () => {
+            console.log('WebSocket connected');
+            state.connected = true;
+            document.getElementById('status-dot').className = 'status-dot';
+            document.getElementById('sb-connection').textContent = 'Connected';
+            // Only refresh if this is the first connection
+            if (!state._initialDataLoaded) {
+                state._initialDataLoaded = true;
                 refreshAll();
-            };
-            
-            state.ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleMessage(data);
-                } catch(e) {
-                    console.error('Parse error:', e);
+            }
+        };
+        
+        state.ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            } catch(e) {
+                console.error('Parse error:', e);
+            }
+        };
+        
+        state.ws.onclose = () => {
+            console.log('WebSocket disconnected');
+            state.connected = false;
+            document.getElementById('status-dot').className = 'status-dot warning';
+            // Only show reconnecting after a delay (avoid false alarms)
+            setTimeout(() => {
+                if (!state.connected) {
+                    document.getElementById('sb-connection').textContent = 'Reconnecting...';
                 }
-            };
-            
-            state.ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                state.connected = false;
-                document.getElementById('status-dot').className = 'status-dot warning';
-                document.getElementById('sb-connection').textContent = 'Reconnecting...';
-                setTimeout(connectWebSocket, 2000);
-            };
-            
-            state.ws.onerror = (err) => {
-                console.error('WebSocket error:', err);
-                state.connected = false;
-            };
-        }
-
+            }, 3000);
+            // Attempt reconnect after delay
+            setTimeout(() => {
+                if (!state.connected) {
+                    connectWebSocket();
+                }
+            }, 2000);
+        };
+        
+        state.ws.onerror = (err) => {
+            console.error('WebSocket error:', err);
+            // Don't change state here - let onclose handle it
+        };
+    }
         // ============================================================
         // UTILITIES
         // ============================================================
