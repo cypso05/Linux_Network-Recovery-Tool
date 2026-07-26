@@ -207,41 +207,49 @@
         font-weight: bold;
         border: 2px solid #1e3a5f;
     }
-    
-    /* ============ ACTION BAR ============ */
+   /* ============ ACTION BAR - Sparkling Blue ============ */
     .action-bar {
-        background: var(--actionbar-bg);
+        background: linear-gradient(180deg, #1e3a5f, #1a2d4a);
         height: var(--actionbar-height);
         padding: 0 16px;
         display: flex;
         align-items: center;
         gap: 2px;
-        border-bottom: 1px solid var(--card-border);
+        border-bottom: 1px solid rgba(255,255,255,0.08);
         flex-shrink: 0;
         overflow-x: auto;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
     .action-bar-btn {
         padding: 7px 16px;
-        border: 1px solid transparent;
-        background: transparent;
-        color: var(--text-secondary);
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.05);
+        color: rgba(255,255,255,0.85);
         border-radius: 6px;
         cursor: pointer;
         font-size: 12px;
         font-weight: 500;
-        transition: all 0.15s;
+        transition: all 0.2s;
         white-space: nowrap;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.2);
     }
     .action-bar-btn:hover {
-        background: #eef1f7;
-        color: var(--text-primary);
+        background: rgba(255,255,255,0.15);
+        color: #ffffff;
+        border-color: rgba(255,255,255,0.3);
+        box-shadow: 0 0 12px rgba(100, 181, 246, 0.2);
     }
     .action-bar-btn.emergency {
         background: var(--error);
         color: white;
         border-color: var(--error);
         font-weight: 600;
-        box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+        animation: emergency-pulse 2s infinite;
+    }
+    @keyframes emergency-pulse {
+        0%, 100% { box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4); }
+        50% { box-shadow: 0 2px 16px rgba(239, 68, 68, 0.7); }
     }
     .action-bar-btn.emergency:hover {
         background: #dc2626;
@@ -249,7 +257,7 @@
     .action-bar-separator {
         width: 1px;
         height: 20px;
-        background: var(--card-border);
+        background: rgba(255,255,255,0.15);
         margin: 0 8px;
         flex-shrink: 0;
     }
@@ -884,7 +892,7 @@
         <button class="action-bar-btn" onclick="restartSelected()" title="Restart Selected">▶ Restart</button>
         <button class="action-bar-btn emergency" onclick="emergencyMode()" title="Emergency Mode">⚠ Emergency</button>
         <span class="action-bar-separator"></span>
-        <button class="action-bar-btn" onclick="toggleTerminal()" title="Terminal">>_ Terminal</button>
+        <button class="action-bar-btn" onclick="toggleTerminal()" title="Toggle Terminal (Ctrl+`)">>_ Terminal</button>
         <button class="action-bar-btn" onclick="showAuditLog()" title="Audit Log">📋 Audit</button>
     </div>
     
@@ -2758,8 +2766,8 @@
             }
         }
         
-    // ============================================================
-    // TERMINAL - Fully Working with History & Better UX
+      // ============================================================
+    // TERMINAL - Azure Cloud Shell Style (Slide-up Panel)
     // ============================================================
 
     let terminalHistory = [];
@@ -2769,44 +2777,122 @@
         const output = document.getElementById('terminal-output');
         if (output) {
             output.innerHTML = `
-                <div class="terminal-output info">╔═══════════════════════════════════════════════════╗</div>
-                <div class="terminal-output info">║  Terminal cleared                                 ║</div>
-                <div class="terminal-output info">╚═══════════════════════════════════════════════════╝</div>
-                <div class="terminal-output" style="color:#6a7090;margin-top:4px;">─────────────────────────────────────────────</div>
+                <div class="terminal-output-line" style="color:#8b949e;">$ Terminal cleared — ready for commands</div>
             `;
         }
         terminalHistory = [];
         terminalHistoryIndex = -1;
+        setTimeout(() => {
+            document.getElementById('terminal-input')?.focus();
+        }, 100);
     }
 
-    // Terminal command execution with history
+    function executeTerminalCommand(command) {
+        const output = document.getElementById('terminal-output');
+        const input = document.getElementById('terminal-input');
+        if (!output) return;
+        
+        // Show the command that was typed
+        output.innerHTML += `<div class="terminal-output-line command">❯ ${escapeHtml(command)}</div>`;
+        output.scrollTop = output.scrollHeight;
+        
+        // Disable input briefly while executing
+        if (input) input.disabled = true;
+        
+        // Execute via API
+        fetch('/api/terminal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                output.innerHTML += `<div class="terminal-output-line error">${escapeHtml(data.error)}</div>`;
+            } else if (data.output) {
+                const lines = data.output.split('\n');
+                const displayLines = lines.slice(0, 100);
+                if (lines.length > 100) {
+                    displayLines.push(`... and ${lines.length - 100} more lines`);
+                }
+                displayLines.forEach(line => {
+                    let cssClass = '';
+                    const lowerLine = line.toLowerCase();
+                    if (lowerLine.includes('error') || lowerLine.includes('fail') || lowerLine.includes('permission denied')) {
+                        cssClass = 'error';
+                    } else if (lowerLine.includes('warning') || lowerLine.includes('warn')) {
+                        cssClass = 'warning';
+                    } else if (lowerLine.includes('success') || lowerLine.includes('ok') || lowerLine.includes('running') || lowerLine.includes('ready')) {
+                        cssClass = 'success';
+                    }
+                    if (line.trim()) {
+                        output.innerHTML += `<div class="terminal-output-line ${cssClass}">${escapeHtml(line)}</div>`;
+                    }
+                });
+                if (data.exit_code !== undefined && data.exit_code !== 0) {
+                    output.innerHTML += `<div class="terminal-output-line warning">Exit code: ${data.exit_code}</div>`;
+                }
+            }
+            output.scrollTop = output.scrollHeight;
+            // Re-enable and focus input
+            if (input) {
+                input.disabled = false;
+                input.focus();
+            }
+        })
+        .catch(error => {
+            output.innerHTML += `<div class="terminal-output-line error">Error: ${escapeHtml(error.message)}</div>`;
+            output.scrollTop = output.scrollHeight;
+            if (input) {
+                input.disabled = false;
+                input.focus();
+            }
+        });
+    }
+
+    function toggleTerminal() {
+        const panel = document.getElementById('terminal-panel');
+        if (!panel) return;
+        
+        const isOpen = panel.classList.contains('open');
+        
+        if (isOpen) {
+            panel.classList.remove('open');
+            const btn = document.querySelector('.terminal-toggle-btn');
+            if (btn) btn.classList.remove('active');
+        } else {
+            panel.classList.add('open');
+            const btn = document.querySelector('.terminal-toggle-btn');
+            if (btn) btn.classList.add('active');
+            // Focus input immediately after slide-up animation
+            setTimeout(() => {
+                const input = document.getElementById('terminal-input');
+                if (input) input.focus();
+            }, 350);
+        }
+    }
+
+    // Terminal input event listeners
     document.addEventListener('DOMContentLoaded', function() {
         const terminalInput = document.getElementById('terminal-input');
-        const terminalContainer = document.getElementById('terminal-container');
         
         if (terminalInput) {
-            // Enter key to execute
             terminalInput.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') {
                     const command = this.value.trim();
                     if (command) {
-                        // Add to history
                         terminalHistory.push(command);
                         terminalHistoryIndex = terminalHistory.length;
                         executeTerminalCommand(command);
                         this.value = '';
                     }
-                }
-                // Up arrow for history (previous command)
-                else if (e.key === 'ArrowUp') {
+                } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     if (terminalHistoryIndex > 0) {
                         terminalHistoryIndex--;
                         this.value = terminalHistory[terminalHistoryIndex] || '';
                     }
-                }
-                // Down arrow for history (next command)
-                else if (e.key === 'ArrowDown') {
+                } else if (e.key === 'ArrowDown') {
                     e.preventDefault();
                     if (terminalHistoryIndex < terminalHistory.length - 1) {
                         terminalHistoryIndex++;
@@ -2819,160 +2905,64 @@
             });
         }
         
-        // Click on terminal container focuses input
-        if (terminalContainer) {
-            terminalContainer.addEventListener('click', function(e) {
-                // Don't steal focus if clicking on output text (for selection)
-                if (e.target.tagName !== 'INPUT') {
-                    terminalInput?.focus();
-                }
-            });
-        }
+        // Ctrl+` to toggle terminal (like VS Code / Azure Cloud Shell)
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === '`') {
+                e.preventDefault();
+                toggleTerminal();
+            }
+        });
     });
-
-    function executeTerminalCommand(command) {
-        const output = document.getElementById('terminal-output');
-        if (!output) return;
         
-        // Add command to output with timestamp
-        const timestamp = new Date().toLocaleTimeString();
-        output.innerHTML += `
-            <div style="display:flex;gap:8px;margin-top:4px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                <span style="color:#58a6ff;font-weight:600;">$</span>
-                <span style="color:#e6edf3;">${escapeHtml(command)}</span>
-                <span style="color:#6a7090;font-size:10px;margin-left:auto;">${timestamp}</span>
+    function showAuditLog() {
+        sendCommand('get_audit_log');
+        document.getElementById('content-area').innerHTML = `
+            <div class="panel">
+                <div class="panel-header">Audit Log</div>
+                <div class="panel-body" id="audit-content">
+                    <div style="color:#6a7090;">Loading...</div>
+                </div>
             </div>
         `;
-        
-        // Show spinner while executing
-        const spinnerId = 'spinner-' + Date.now();
-        output.innerHTML += `<div id="${spinnerId}" class="terminal-output info">⏳ Executing...</div>`;
-        output.scrollTop = output.scrollHeight;
-        
-        // Execute command via API
-        fetch('/api/terminal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: command })
-        })
-        .then(response => response.json())
-        .then(data => {
-            // Remove spinner
-            const spinner = document.getElementById(spinnerId);
-            if (spinner) spinner.remove();
-            
-            if (data.error) {
-                output.innerHTML += `<div class="terminal-output error">❌ Error: ${escapeHtml(data.error)}</div>`;
-            } else if (data.output) {
-                const lines = data.output.split('\n');
-                // Only show first 50 lines to prevent flooding
-                const displayLines = lines.slice(0, 50);
-                if (lines.length > 50) {
-                    displayLines.push(`... and ${lines.length - 50} more lines (truncated)`);
-                }
-                displayLines.forEach(line => {
-                    let color = '#8b949e';
-                    let prefix = '';
-                    if (line.toLowerCase().includes('error') || line.toLowerCase().includes('fail')) {
-                        color = '#f85149';
-                        prefix = '❌ ';
-                    } else if (line.toLowerCase().includes('warning') || line.toLowerCase().includes('warn')) {
-                        color = '#d29922';
-                        prefix = '⚠️ ';
-                    } else if (line.toLowerCase().includes('success') || line.toLowerCase().includes('ok') || line.toLowerCase().includes('connected')) {
-                        color = '#3fb950';
-                        prefix = '✅ ';
-                    } else if (line.includes('●') || line.includes('running') || line.includes('up')) {
-                        color = '#58a6ff';
-                    }
-                    if (line.trim()) {
-                        output.innerHTML += `<div class="terminal-output" style="color:${color};">${prefix}${escapeHtml(line)}</div>`;
-                    }
-                });
-                // Show exit code if non-zero
-                if (data.exit_code !== undefined && data.exit_code !== 0) {
-                    output.innerHTML += `<div class="terminal-output warning">⚠️ Exit code: ${data.exit_code}</div>`;
-                }
-            }
-            // Scroll to bottom
-            const container = document.getElementById('terminal-container');
-            if (container) {
-                container.scrollTop = container.scrollHeight;
-            }
-            output.scrollTop = output.scrollHeight;
-        })
-        .catch(error => {
-            // Remove spinner
-            const spinner = document.getElementById(spinnerId);
-            if (spinner) spinner.remove();
-            output.innerHTML += `<div class="terminal-output error">❌ Error: ${escapeHtml(error.message)}</div>`;
-        });
     }
-
-    function toggleTerminal() {
-        const container = document.getElementById('terminal-container');
-        if (!container) return;
-        
-        if (container.style.display === 'none') {
-            container.style.display = 'block';
-            const input = document.getElementById('terminal-input');
-            if (input) {
-                setTimeout(() => input.focus(), 100);
-            }
-            // Update button style
-            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
-            if (btn) btn.style.color = 'var(--primary)';
-        } else {
-            container.style.display = 'none';
-            const btn = document.querySelector('.action-bar-btn[onclick="toggleTerminal()"]');
-            if (btn) btn.style.color = '';
+    
+    function restartSelected() {
+        if (state.selectedItems.size === 0) {
+            alert('Select items first by checking the boxes');
+            return;
         }
+        bulkRestart();
     }
-        
-        function showAuditLog() {
-            sendCommand('get_audit_log');
-            document.getElementById('content-area').innerHTML = `
-                <div class="panel">
-                    <div class="panel-header">Audit Log</div>
-                    <div class="panel-body" id="audit-content">
-                        <div style="color:#6a7090;">Loading...</div>
-                    </div>
-                </div>
-            `;
+    
+    // ============================================================
+    // KEYBOARD SHORTCUTS
+    // ============================================================
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            document.getElementById('global-search').focus();
         }
-        
-        function restartSelected() {
-            if (state.selectedItems.size === 0) {
-                alert('Select items first by checking the boxes');
-                return;
+        if (e.key === 'Escape') {
+            closeDrawer();
+            document.getElementById('search-results').classList.remove('show');
+            document.getElementById('alerts-dropdown').classList.remove('show');
+            // Close terminal on Escape too
+            const panel = document.getElementById('terminal-panel');
+            if (panel && panel.classList.contains('open')) {
+                toggleTerminal();
             }
-            bulkRestart();
         }
-        
-        // ============================================================
-        // KEYBOARD SHORTCUTS
-        // ============================================================
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                document.getElementById('global-search').focus();
-            }
-            if (e.key === 'Escape') {
-                closeDrawer();
-                document.getElementById('search-results').classList.remove('show');
-                document.getElementById('alerts-dropdown').classList.remove('show');
-            }
-        });
-        
-        // Close search results on outside click
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.search-container')) {
-                document.getElementById('search-results').classList.remove('show');
-            }
-            if (!e.target.closest('.alert-bell') && !e.target.closest('.alerts-dropdown')) {
-                document.getElementById('alerts-dropdown').classList.remove('show');
-            }
-        });
+    });
+    
+    // Close search results on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.search-container')) {
+            document.getElementById('search-results').classList.remove('show');
+        }
+        if (!e.target.closest('.alert-bell') && !e.target.closest('.alerts-dropdown')) {
+            document.getElementById('alerts-dropdown').classList.remove('show');
+        }
+    });
         
         // ============================================================
         // INITIALIZATION
